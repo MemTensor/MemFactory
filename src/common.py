@@ -548,7 +548,7 @@ class Neo4jClient:
 class MilvusClient:
     """
     Milvus客户端：用于向量检索
-    支持账号密码认证
+    支持账号密码认证，支持user_id过滤
     """
     
     _instance = None
@@ -564,7 +564,7 @@ class MilvusClient:
             return
         self._collection = None
         self._use_mock = True
-        self._mock_vectors: Dict[str, List[float]] = {}
+        self._mock_vectors: Dict[str, Dict[str, Any]] = {}  # {memory_id: {"embedding": [...], "user_id": "..."}}
         self._embedding_client = EmbeddingClient()
         
         try:
@@ -585,14 +585,20 @@ class MilvusClient:
             if not utility.has_collection(MILVUS_COLLECTION):
                 fields = [
                     FieldSchema(name="id", dtype=DataType.VARCHAR, is_primary=True, max_length=100),
+                    FieldSchema(name="user_id", dtype=DataType.VARCHAR, max_length=100),  # 添加user_id字段
                     FieldSchema(name="embedding", dtype=DataType.FLOAT_VECTOR, dim=EMBEDDING_DIM)
                 ]
-                schema = CollectionSchema(fields, description="Memory embeddings")
+                schema = CollectionSchema(fields, description="Memory embeddings with user_id filter")
                 self._collection = Collection(MILVUS_COLLECTION, schema)
-                # 创建索引
+                # 创建向量索引
                 self._collection.create_index(
                     field_name="embedding",
                     index_params={"index_type": "IVF_FLAT", "metric_type": "COSINE", "params": {"nlist": 128}}
+                )
+                # 为user_id创建标量索引以加速过滤
+                self._collection.create_index(
+                    field_name="user_id",
+                    index_params={"index_type": "INVERTED"}
                 )
             else:
                 self._collection = Collection(MILVUS_COLLECTION)
@@ -605,48 +611,70 @@ class MilvusClient:
         
         self._initialized = True
     
-    def insert(self, memory_id: str, embedding: List[float]) -> bool:
-        """插入向量"""
+    def insert(self, memory_id: str, embedding: List[float], user_id: str = "default_user") -> bool:
+        """
+        插入向量
+        
+        Args:
+            memory_id: 记忆ID
+            embedding: 向量
+            user_id: 用户ID
+            
+        Returns:
+            是否插入成功
+        """
         if self._use_mock:
-            self._mock_vectors[memory_id] = embedding
+            self._mock_vectors[memory_id] = {"embedding": embedding, "user_id": user_id}
             return True
         
         try:
-            self._collection.insert([[memory_id], [embedding]])
+            self._collection.insert([[memory_id], [user_id], [embedding]])
             self._collection.flush()
             return True
         except Exception as e:
             print(f"[MilvusClient] 插入失败: {e}")
             return False
     
-    def search(self, query_embedding: List[float], top_k: int = 10) -> List[Tuple[str, float]]:
+    def search(self, query_embedding: List[float], top_k: int = 10, 
+               user_id: str = None) -> List[Tuple[str, float]]:
         """
-        向量检索
+        向量检索，支持user_id过滤
         
         Args:
             query_embedding: 查询向量
             top_k: 返回数量
+            user_id: 用户ID过滤（可选，None表示不过滤）
             
         Returns:
             (memory_id, score) 列表
         """
         if self._use_mock:
-            # Mock实现：计算余弦相似度
+            # Mock实现：计算余弦相似度，支持user_id过滤
             results = []
-            for mid, emb in self._mock_vectors.items():
-                score = self._embedding_client.similarity(query_embedding, emb)
+            for mid, data in self._mock_vectors.items():
+                # user_id过滤
+                if user_id is not None and data["user_id"] != user_id:
+                    continue
+                score = self._embedding_client.similarity(query_embedding, data["embedding"])
                 results.append((mid, score))
             results.sort(key=lambda x: x[1], reverse=True)
             return results[:top_k]
         
         try:
             search_params = {"metric_type": "COSINE", "params": {"nprobe": 10}}
+            
+            # 构建过滤表达式
+            expr = None
+            if user_id is not None:
+                expr = f'user_id == "{user_id}"'
+            
             results = self._collection.search(
                 data=[query_embedding],
                 anns_field="embedding",
                 param=search_params,
                 limit=top_k,
-                output_fields=["id"]
+                expr=expr,  # 使用user_id过滤
+                output_fields=["id", "user_id"]
             )
             return [(hit.id, hit.score) for hit in results[0]]
         except Exception as e:
@@ -666,6 +694,29 @@ class MilvusClient:
             return True
         except Exception as e:
             print(f"[MilvusClient] 删除失败: {e}")
+            return False
+    
+    def delete_by_user(self, user_id: str) -> bool:
+        """
+        删除指定用户的所有向量
+        
+        Args:
+            user_id: 用户ID
+            
+        Returns:
+            是否删除成功
+        """
+        if self._use_mock:
+            to_delete = [mid for mid, data in self._mock_vectors.items() if data["user_id"] == user_id]
+            for mid in to_delete:
+                del self._mock_vectors[mid]
+            return True
+        
+        try:
+            self._collection.delete(f'user_id == "{user_id}"')
+            return True
+        except Exception as e:
+            print(f"[MilvusClient] 按用户删除失败: {e}")
             return False
 
 
@@ -716,11 +767,11 @@ class MemoryStore:
             # 2. 保存到Neo4j（结构化数据）
             neo4j_success = self.neo4j.save_memory(memory)
             
-            # 3. 保存到Milvus（向量数据），使用相同的ID
-            milvus_success = self.milvus.insert(memory.id, memory.embedding)
+            # 3. 保存到Milvus（向量数据），使用相同的ID和user_id
+            milvus_success = self.milvus.insert(memory.id, memory.embedding, memory.user_id)
             
             if neo4j_success and milvus_success:
-                print(f"[MemoryStore] 保存成功: {memory.id} - {memory.key}")
+                print(f"[MemoryStore] 保存成功: {memory.id} - {memory.key} (user: {memory.user_id})")
                 return True
             else:
                 print(f"[MemoryStore] 保存部分失败: Neo4j={neo4j_success}, Milvus={milvus_success}")
@@ -760,7 +811,7 @@ class MemoryStore:
         Args:
             query: 查询文本
             top_k: 返回数量
-            user_id: 用户ID过滤
+            user_id: 用户ID过滤（在Milvus层面直接过滤，而非检索后过滤）
             
         Returns:
             (记忆, 相似度分数) 列表
@@ -768,18 +819,16 @@ class MemoryStore:
         # 1. 生成查询向量
         query_emb = self.embedding.embed(query)
         
-        # 2. 向量检索
-        vector_results = self.milvus.search(query_emb, top_k=top_k * 2)
+        # 2. 向量检索（user_id在Milvus层面直接过滤）
+        # 多请求一些结果，因为后续还需要状态过滤
+        vector_results = self.milvus.search(query_emb, top_k=top_k * 2, user_id=user_id)
         
-        # 3. 获取记忆详情并过滤
+        # 3. 获取记忆详情并进行状态过滤
         results = []
         for memory_id, score in vector_results:
             memory = self.neo4j.get_memory(memory_id)
             if memory:
-                # 用户过滤
-                if user_id and memory.user_id != user_id:
-                    continue
-                # 状态过滤
+                # 状态过滤（user_id已在Milvus层面过滤）
                 if memory.status != MemoryStatus.ACTIVATED.value:
                     continue
                 results.append((memory, score))
