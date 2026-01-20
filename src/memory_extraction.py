@@ -402,7 +402,6 @@ class MemoryExtractor:
     
     def __init__(self, config: ExtractionConfig = None):
         self.config = config or ExtractionConfig()
-        
         # 根据策略选择抽取器
         if self.config.strategy == "react":
             self._extractor = ReActExtractor(self.config)
