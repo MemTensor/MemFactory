@@ -3,6 +3,7 @@ import os
 import json
 import re
 import copy
+import ipdb
 from datetime import datetime
 from typing import List, Dict, Any, Tuple, Set
 
@@ -209,7 +210,7 @@ class LoCoMoPipeline:
                         trigger = qa['trigger']
                         if trigger == current_parsed_id:
                             # TRIGGER HIT!
-                            
+                            # ipdb.set_trace()
                             # 1. Check if all evidence is within current window (or history of current window)
                             evidence_sessions = [self.parse_dia_id(e)[0] for e in qa['evidence']]
                             min_ev_s = min(evidence_sessions)
@@ -273,18 +274,27 @@ class LoCoMoPipeline:
 
     def run(self):
         data = self.load_data()
+        
+        # (1) 初始化：清空输出文件
+        self.log(f"Initializing output file: {self.output_path}")
+        with open(self.output_path, 'w', encoding='utf-8') as f:
+            json.dump([], f)
+
         for sample in data:
             self.process_sample(sample)
-        
-        self.log(f"Saving {len(self.results)} records to {self.output_path}")
-        with open(self.output_path, 'w', encoding='utf-8') as f:
-            json.dump(self.results, f, ensure_ascii=False, indent=2)
+            
+            # (2) 增量保存：每次处理完一个sample就更新文件
+            # 使用重写方式 (rewrite) 确保 JSON 格式完整
+            self.log(f"Checkpoint: Saving {len(self.results)} records to {self.output_path}")
+            with open(self.output_path, 'w', encoding='utf-8') as f:
+                json.dump(self.results, f, ensure_ascii=False, indent=2)
+
 
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data", default="Memory-CookBook/datas/locomo10.json")
-    parser.add_argument("--output", default="Memory-CookBook/scripts/processed_locomo.json")
+    parser.add_argument("--data", default="./datas/locomo10.json")
+    parser.add_argument("--output", default="./scripts/processed_locomo.json")
     parser.add_argument("--limit", type=int, default=0, help="Limit number of samples to process (0 for all)")
     parser.add_argument("--dry-run", action="store_true", help="Use mock LLM for testing")
     args = parser.parse_args()

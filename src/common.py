@@ -249,7 +249,18 @@ class LLMClient:
                 response = response.split("```json")[1].split("```")[0]
             elif "```" in response:
                 response = response.split("```")[1].split("```")[0]
-            return json.loads(response.strip())
+            
+            # 清理空白字符
+            response = response.strip()
+            # 处理思维链
+            if response.startswith("<think>"):
+                response = response.split("</think>")[-1]
+                response = response.strip()
+            # 尝试提取JSON对象（处理可能存在的<think>标签或其他前缀）
+            if not response.startswith("{"):
+                print("[LLMClient-parse_json] 回答不是 { 开头无法解析", response[:100])
+
+            return json.loads(response)
         except json.JSONDecodeError as e:
             print(f"[LLMClient] JSON解析失败: {e}")
             return None
