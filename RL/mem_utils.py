@@ -10,11 +10,13 @@ import numpy as np
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
-    from src.common import LLMClient, EmbeddingClient, MemoryItem, generate_id
+    from src.common import LLMClient, EmbeddingClient, MemoryItem, generate_id, get_memory_store, MemoryStore
+    from src.common import format_conversation, ConversationMessage
 except ImportError:
     # Fallback if running from a different location
     sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-    from src.common import LLMClient, EmbeddingClient, MemoryItem, generate_id
+    from src.common import LLMClient, EmbeddingClient, MemoryItem, generate_id, get_memory_store, MemoryStore
+    from src.common import format_conversation, ConversationMessage
 
 # =============================================================================
 # Prompts
@@ -57,156 +59,101 @@ Conversation:
 
 Your output:"""
 
-UPDATE_MEMORY_PROMPT = """You are a smart memory manager which controls the memory of a system.
-You can perform four operations: (1) add into the memory, (2) update the memory, (3) delete from the memory, and (4) no change.
+UPDATE_MEMORY_PROMPT = """You are a smart memory manager.
+You have two lists of memories:
+1. **Existing Memories** (from the database).
+2. **New Candidate Memories** (extracted from the latest conversation).
 
-Based on the above four operations, the memory will change.
+Your goal is to decide how to update the memory database.
 
-Compare newly retrieved facts with the existing memory. For each new fact, decide whether to:
-- ADD: Add it to the memory as a new element
-- UPDATE: Update an existing memory element
-- DELETE: Delete an existing memory element
-- NONE: Make no change (if the fact is already present or irrelevant)
+**Operations Allowed:**
 
-There are specific guidelines to select which operation to perform:
+For **Existing Memories**:
+- `NONE`: Keep as is.
+- `DEL`: Delete this memory (e.g., if it is contradicted by new info, or merged into a new memory).
 
-1. **Add**: If the retrieved facts contain new information not present in the memory, then you have to add it by generating a new ID in the id field.
-- **Example**:
-    - Old Memory:
-        [
-            {
-                "id" : "0",
-                "text" : "User is a software engineer"
-            }
-        ]
-    - Retrieved facts: ["Name is John"]
-    - New Memory:
-        {
-            "memory" : [
-                {
-                    "id" : "0",
-                    "text" : "User is a software engineer",
-                    "event" : "NONE"
-                },
-                {
-                    "id" : "1",
-                    "text" : "Name is John",
-                    "event" : "ADD"
-                }
-            ]
-        }
+For **New Candidate Memories**:
+- `ADD`: Add this memory to the database.
+- `NONE`: Ignore this memory (e.g., if it's redundant or already covered by existing memories).
+- `UPDATE`: Modify this memory before adding (e.g., to merge information from an old memory).
 
-2. **Update**: If the retrieved facts contain information that is already present in the memory but the information is totally different, then you have to update it.
-If the retrieved fact contains information that conveys the same thing as the elements present in the memory, then you have to keep the fact which has the most information.
-Example (a) -- if the memory contains "User likes to play cricket" and the retrieved fact is "Loves to play cricket with friends", then update the memory with the retrieved facts.
-Example (b) -- if the memory contains "Likes cheese pizza" and the retrieved fact is "Loves cheese pizza", then you do not need to update it because they convey the same information.
-If the direction is to update the memory, then you have to update it.
-Please keep in mind while updating you have to keep the same ID.
-Please note to return the IDs in the output from the input IDs only and do not generate any new ID.
-- **Example**:
-    - Old Memory:
-        [
-            {
-                "id" : "0",
-                "text" : "I really like cheese pizza"
-            },
-            {
-                "id" : "1",
-                "text" : "User is a software engineer"
-            },
-            {
-                "id" : "2",
-                "text" : "User likes to play cricket"
-            }
-        ]
-    - Retrieved facts: ["Loves chicken pizza", "Loves to play cricket with friends"]
-    - New Memory:
-        {
-        "memory" : [
-                {
-                    "id" : "0",
-                    "text" : "Loves cheese and chicken pizza",
-                    "event" : "UPDATE",
-                    "old_memory" : "I really like cheese pizza"
-                },
-                {
-                    "id" : "1",
-                    "text" : "User is a software engineer",
-                    "event" : "NONE"
-                },
-                {
-                    "id" : "2",
-                    "text" : "Loves to play cricket with friends",
-                    "event" : "UPDATE",
-                    "old_memory" : "User likes to play cricket"
-                }
-            ]
-        }
+**Merging Strategy:**
+If a New Candidate (ID: Y) contains updated information for an Existing Memory (ID: X):
+1. Mark Existing Memory X as `DEL`.
+2. Mark New Candidate Y as `UPDATE` and provide the merged content.
 
-3. **Delete**: If the retrieved facts contain information that contradicts the information present in the memory, then you have to delete it. Or if the direction is to delete the memory, then you have to delete it.
-Please note to return the IDs in the output from the input IDs only and do not generate any new ID.
-- **Example**:
-    - Old Memory:
-        [
-            {
-                "id" : "0",
-                "text" : "Name is John"
-            },
-            {
-                "id" : "1",
-                "text" : "Loves cheese pizza"
-            }
-        ]
-    - Retrieved facts: ["Dislikes cheese pizza"]
-    - New Memory:
-        {
-        "memory" : [
-                {
-                    "id" : "0",
-                    "text" : "Name is John",
-                    "event" : "NONE"
-                },
-                {
-                    "id" : "1",
-                    "text" : "Loves cheese pizza",
-                    "event" : "DELETE"
-                }
-        ]
-        }
+**Output Format:**
+Return a JSON object with a list of operations.
+You MUST include an operation for **EVERY** memory item (both Existing and Candidate) in the input lists. Do not skip any IDs.
 
-4. **No Change**: If the retrieved facts contain information that is already present in the memory, then you do not need to make any changes.
-- **Example**:
-    - Old Memory:
-        [
-            {
-                "id" : "0",
-                "text" : "Name is John"
-            },
-            {
-                "id" : "1",
-                "text" : "Loves cheese pizza"
-            }
-        ]
-    - Retrieved facts: ["Name is John"]
-    - New Memory:
-        {
-        "memory" : [
-                {
-                    "id" : "0",
-                    "text" : "Name is John",
-                    "event" : "NONE"
-                },
-                {
-                    "id" : "1",
-                    "text" : "Loves cheese pizza",
-                    "event" : "NONE"
-                }
-            ]
-        }
+Format:
+```json
+{{
+  "operations": [
+    {{ "id": <id>, "op": "NONE" }},
+    {{ "id": <id>, "op": "DEL" }},
+    {{ "id": <id>, "op": "ADD" }},
+    {{ "id": <id>, "op": "UPDATE", "key": "...", "value": "..." }}
+  ]
+}}
+```
 
-Retrieved facts: {facts}
-Old Memory: {old_memory}
-New Memory:"""
+**Examples:**
+
+Example 1: Add new info
+Existing:
+[{{"id": 1, "key": "User Info", "value": "Name is John"}}]
+Candidates:
+[{{"id": 2, "key": "User Info", "value": "Lives in NY"}}]
+Output:
+```json
+{{
+  "operations": [
+    {{ "id": 1, "op": "NONE" }},
+    {{ "id": 2, "op": "ADD" }}
+  ]
+}}
+```
+
+Example 2: Update/Merge
+Existing:
+[{{"id": 1, "key": "Pizza", "value": "Likes cheese pizza"}}]
+Candidates:
+[{{"id": 2, "key": "Pizza", "value": "Loves pepperoni too"}}]
+Output:
+```json
+{{
+  "operations": [
+    {{ "id": 1, "op": "DEL" }},
+    {{ "id": 2, "op": "UPDATE", "key": "Pizza Preference", "value": "Likes cheese pizza and loves pepperoni" }}
+  ]
+}}
+```
+
+Example 3: Redundant info (No Change)
+Existing:
+[{{"id": 1, "key": "Hobby", "value": "Likes reading"}}]
+Candidates:
+[{{"id": 2, "key": "Hobby", "value": "Enjoys reading books"}}]
+Output:
+```json
+{{
+  "operations": [
+    {{ "id": 1, "op": "NONE" }},
+    {{ "id": 2, "op": "NONE" }}
+  ]
+}}
+```
+
+**Task:**
+
+Existing Memories:
+{context_memory}
+
+New Candidate Memories:
+{candidate_memory}
+
+Output:"""
 
 QA_PROMPT = """Based on the following memory information, answer the user's question. Please answer directly and accurately. If the memory contains explicit information, use it.
 
@@ -229,33 +176,94 @@ Is the predicted answer consistent with the standard answer? Please output only 
 # Helper Functions
 # =============================================================================
 
-def parse_json_from_text(text: str) -> Optional[Dict]:
-    """Extract and parse JSON from text"""
-    try:
-        if "```json" in text:
-            text = text.split("```json")[1].split("```")[0]
-        elif "```" in text:
-            text = text.split("```")[1].split("```")[0]
-        text = text.strip()
-        return json.loads(text)
-    except Exception as e:
-        # print(f"JSON Parse Error: {e}")
-        return None
+def parse_json_from_text(response: str) -> Optional[Dict]:
+        """解析JSON响应"""
+        try:
+            # 尝试提取JSON块
+            if "```json" in response:
+                response = response.split("```json")[1].split("```")[0]
+            elif "```" in response:
+                response = response.split("```")[1].split("```")[0]
+            
+            # 清理空白字符
+            response = response.strip()
+            # 处理思维链
+            if response.startswith("<think>"):
+                response = response.split("</think>")[-1]
+                response = response.strip()
+            # 尝试提取JSON对象（处理可能存在的<think>标签或其他前缀）
+            if not response.startswith("{"):
+                print("extract 结果不是 { 开头无法解析", response[:100])
 
-def construct_extraction_prompt(conversation: str) -> str:
-    return EXTRACTION_PROMPT_EN.format(conversation=conversation)
+            return json.loads(response)
+        except json.JSONDecodeError as e:
+            print(f"extract 结果 JSON 解析失败: {e}")
+            return None
 
-def construct_update_prompt(facts: List[str], old_memory: List[Dict]) -> str:
+def prepare_memory_lists(context_memory: List[Dict], extraction_output: str):
+    """
+    Prepares numbered lists for prompt and mapping for execution.
+    Returns:
+        context_list_fmt: List[Dict] with 'id', 'key', 'value'
+        candidate_list_fmt: List[Dict] with 'id', 'key', 'value'
+        id_map: Dict[int, Any] - maps temp ID to (type, original_obj)
+            type 'context': original_obj is MemoryItem
+            type 'candidate': original_obj is Dict (from extraction)
+    """
+    context_memory = [ MemoryItem.from_dict(mem) for mem in context_memory ]
+
+    id_counter = 1
+    id_map = {}
+    
+    # 1. Process Context Memory
+    context_list_fmt = []
+    for mem in context_memory:
+        temp_id = id_counter
+        id_counter += 1
+        id_map[temp_id] = ("context", mem)
+        context_list_fmt.append({
+            "id": temp_id,
+            "key": mem.key,
+            "value": mem.value
+        })
+        
+    # 2. Process Extraction Output
+    candidate_list_fmt = []
+    ext_json = parse_json_from_text(extraction_output)
+    if ext_json and "memory_list" in ext_json:
+        for item in ext_json["memory_list"]:
+            temp_id = id_counter
+            id_counter += 1
+            id_map[temp_id] = ("candidate", item)
+            candidate_list_fmt.append({
+                "id": temp_id,
+                "key": item.get("key", "Unknown"),
+                "value": item.get("value", "")
+            })
+    
+    return context_list_fmt, candidate_list_fmt, id_map
+
+def construct_extraction_prompt(conversation) -> str:
+    conversation_msg_list = []
+    for msg in conversation:
+        msg_fmt = ConversationMessage(
+            role=msg["role"],
+            content=msg["content"],
+            timestamp="",
+        )
+        msg_fmt.timestamp = ""
+        conversation_msg_list.append(msg_fmt)
+    conversation_str = format_conversation(conversation_msg_list)
+    return EXTRACTION_PROMPT_EN.format(conversation=conversation_str)
+
+def construct_update_prompt(context_memory: List[Dict], extraction_output: str) -> str:
+    ctx_fmt, cand_fmt, _ = prepare_memory_lists(context_memory, extraction_output)
+    
     return UPDATE_MEMORY_PROMPT.format(
-        facts=json.dumps(facts, ensure_ascii=False),
-        old_memory=json.dumps(old_memory, ensure_ascii=False, indent=4)
+        context_memory=json.dumps(ctx_fmt, ensure_ascii=False, indent=2),
+        candidate_memory=json.dumps(cand_fmt, ensure_ascii=False, indent=2)
     )
 
-def memory_to_dict(memories: List[MemoryItem]) -> List[Dict]:
-    return [
-        {"id": m.id, "text": f"{m.key}: {m.value}"}
-        for m in memories
-    ]
 
 # =============================================================================
 # Evaluation Logic
@@ -265,144 +273,114 @@ class MemoryEvaluator:
     def __init__(self):
         self.llm = LLMClient()
         self.embedding = EmbeddingClient()
-    
-    def apply_update_plan(self, context_memory: List[MemoryItem], update_plan: Dict) -> List[MemoryItem]:
-        """
-        Execute update plan on a temporary memory list
-        update_plan structure: {"memory": [{"id":..., "text":..., "event":...}, ...]}
-        """
-        if not update_plan or "memory" not in update_plan:
-            return context_memory
-            
-        current_mem_map = {m.id: m for m in context_memory}
-        updated_mem_map = current_mem_map.copy()
+        self.store = get_memory_store()
         
-        for item in update_plan["memory"]:
-            event = item.get("event", "NONE").upper()
-            mid = item.get("id")
-            text = item.get("text", "")
-            
-            # Simple parsing of text to key/value if possible, else put all in value
-            key = "Updated Memory"
-            value = text
-            if ":" in text:
-                parts = text.split(":", 1)
-                key = parts[0].strip()
-                value = parts[1].strip()
-            
-            if event == "ADD":
-                # For ADD, ID might be new or reused from prompt example logic
-                # The prompt says "generate a new ID", but in simulation we just accept the ID provided or gen new
-                new_mem = MemoryItem(
-                    id=mid if mid not in updated_mem_map else generate_id(),
-                    key=key,
-                    value=value,
-                    memory_type="UserMemory",
-                    tags=[]
-                )
-                updated_mem_map[new_mem.id] = new_mem
-                
-            elif event == "UPDATE":
-                if mid in updated_mem_map:
-                    # Update existing
-                    mem = updated_mem_map[mid]
-                    mem.key = key
-                    mem.value = value
-                    # In a real system, we might update updated_at, etc.
-                    
-            elif event == "DELETE":
-                if mid in updated_mem_map:
-                    del updated_mem_map[mid]
-                    
-            # NONE does nothing
-            
-        return list(updated_mem_map.values())
+    def reset_memory(self, memory: List):
+        if self.store.use_mock:
+            # Convert MemoryItem objects to dicts for from_list
+            self.store.from_list(memory)
+        else:
+            print("Warning: Running evaluation on real database. Skipping memory reset to avoid data loss.")
 
-    def retrieve(self, memories: List[MemoryItem], query: str, top_k: int = 3) -> List[MemoryItem]:
+    def apply_update_plan(self, context_memory: List[Dict], update_plan: Dict, extraction_output: str) -> None:
         """
-        Simple retrieval from the in-memory list
+        Execute update plan on the memory store.
         """
-        if not memories:
-            return []
+        if not update_plan or "operations" not in update_plan:
+            return
             
-        query_emb = self.embedding.embed(query)
+        # Reconstruct the mapping to interpret sequential IDs
+        _, _, id_map = prepare_memory_lists(context_memory, extraction_output)
         
-        # Calculate scores
-        scores = []
-        for mem in memories:
-            # Re-embed memory if needed (simulation)
-            if mem.embedding is None:
-                mem_text = f"{mem.key} {mem.value}"
-                mem.embedding = self.embedding.embed(mem_text)
+        for op in update_plan["operations"]:
+            temp_id = op.get("id")
+            action = op.get("op", "NONE").upper()
             
-            # Cosine similarity
-            score = self.embedding.similarity(query_emb, mem.embedding)
-            scores.append((score, mem))
+            if temp_id not in id_map:
+                continue
+                
+            origin_type, origin_obj = id_map[temp_id]
             
-        # Sort
-        scores.sort(key=lambda x: x[0], reverse=True)
-        return [m for s, m in scores[:top_k]]
+            if origin_type == "context":
+                if action == "DEL":
+                    # Delete existing memory
+                    self.store.delete(origin_obj.id)
+            
+            elif origin_type == "candidate":
+                if action in ["ADD", "UPDATE"]:
+                    # Create new memory item
+                    # Use provided key/value in op, or fallback to origin_obj (extracted item)
+                    key = op.get("key", origin_obj.get("key"))
+                    value = op.get("value", origin_obj.get("value"))
+                    
+                    new_mem = MemoryItem(
+                        id=generate_id(),
+                        key=key,
+                        value=value,
+                        memory_type=origin_obj.get("memory_type", "UserMemory"),
+                        tags=origin_obj.get("tags", [])
+                    )
+                    self.store.save(new_mem)
+
+    def retrieve(self, query: str, top_k: int = 3) -> List[MemoryItem]:
+        """
+        Retrieve relevant memories from the store.
+        """
+        # search_similar returns list of (MemoryItem, score)
+        results = self.store.search_similar(query, top_k=top_k)
+        return [m for m, s in results]
 
     def evaluate(self, 
-                 fact: str, 
+                 memory: List[Dict],
+                 fact: List[Dict], 
                  query: str, 
                  answer: str, 
-                 context_memory: List[MemoryItem], 
+                 context_memory: List[Dict], 
                  extraction_output: str, 
                  update_plan_output: str) -> float:
-        """
-        Full evaluation pipeline:
-        1. Parse Extraction -> Extracted Facts
-        2. Parse Update Plan -> Plan JSON
-        3. Execute Plan -> New Memory State
-        4. Retrieve(Query) -> Context
-        5. QA(Context, Query) -> Predicted Answer
-        6. Judge(Predicted, Standard) -> Reward
-        """
         
-        # 1. Parse Extraction
-        # extraction_output is expected to be JSON from the extraction prompt
-        ext_json = parse_json_from_text(extraction_output)
-        extracted_facts = []
-        if ext_json and "memory_list" in ext_json:
-            for m in ext_json["memory_list"]:
-                extracted_facts.append(f"{m.get('key', '')}: {m.get('value', '')}")
+        # 1. Reset Memory Store
+        self.reset_memory(memory)
         
-        if not extracted_facts:
-            # If extraction failed, maybe use raw fact? 
-            # Or penalize? For now let's just use the raw fact provided in input if extraction failed
-            # But the update prompt depends on "Retrieved facts" which comes from extraction
-            # If extraction yields nothing, the update might be NO-OP.
-            extracted_facts = [fact] # Fallback to raw fact for robustness in early training
-            
-        # 2. Parse Update Plan
+        # 2. Parse Extraction (Optional check, mainly for logging or fallback)
+        # We don't strictly need parsed extraction here if we just use it for ID mapping in apply_update_plan
+        
+        # 3. Parse Update Plan
         update_json = parse_json_from_text(update_plan_output)
         
-        # 3. Apply Update
-        # Convert context_memory to list if it's not already
-        # In simulation, context_memory should be a list of MemoryItem
-        new_memory_state = self.apply_update_plan(context_memory, update_json)
+        # 4. Apply Update
+        self.apply_update_plan(context_memory, update_json, extraction_output)
         
-        # 4. Retrieval
-        retrieved_docs = self.retrieve(new_memory_state, query)
+        # 5. Retrieval
+        retrieved_docs = self.retrieve(query, top_k=15)
         context_str = "\n".join([f"- {m.key}: {m.value}" for m in retrieved_docs])
         
-        # 5. QA
+        # 6. QA
         qa_prompt = QA_PROMPT.format(context=context_str, question=query)
-        # Using LLM to generate answer
-        # Note: In training loop, this might be slow. 
-        # But user requested this flow.
         pred_answer = self.llm.chat("You are a helpful assistant.", qa_prompt)
-        
-        # 6. Judge
+        # 处理思考过程：
+        if "<think>" in pred_answer:
+            if "</think>" in pred_answer:
+                pred_answer = pred_answer.split("</think>")[-1].strip()
+            else:# last 100 chars
+                pred_answer = pred_answer[-100:].strip()
+
+        # 7. Judge
         judge_prompt = JUDGE_PROMPT.format(question=query, answer=answer, prediction=pred_answer)
         judge_result = self.llm.chat("You are an impartial judge.", judge_prompt)
-        
+        if "<think>" in judge_result:
+            if "</think>" in judge_result:
+                judge_result = judge_result.split("</think>")[-1].strip()
+            else:# last 100 chars
+                judge_result = judge_result[-100:].strip()
+
         # Parse True/False
         if "True" in judge_result:
             return 1.0
         elif "False" in judge_result:
             return 0.0
-        else:
-            # Fuzzy check
-            return 0.5 # Ambiguous
+        else: 
+            # TODO: 奖励函数还需要考虑模型的回答根本不合法（比如格式不正确）的情况
+            # 暂时先不管
+            return 0.0 # Ambiguous
+

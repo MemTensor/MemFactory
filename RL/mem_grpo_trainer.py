@@ -59,23 +59,18 @@ class MemoryDataset(Dataset):
                 for line in f:
                     if line.strip():
                         item = json.loads(line)
-                        # Parse context_memory to MemoryItem objects
-                        if "context_memory" in item and isinstance(item["context_memory"], list):
-                            # Assuming items in list are dicts matching MemoryItem fields
-                            item["context_memory"] = [MemoryItem(**m) for m in item["context_memory"]]
-                        self.data.append(item)
+                        # Ensure keys match what trainer expects
+                        processed_item = {
+                            "memory": item.get("M", item.get("memory")),
+                            "fact": item.get("f", item.get("fact")),
+                            "query": item.get("q", item.get("query")),
+                            "answer": item.get("a", item.get("answer")),
+                            "context_memory": item.get("context_memory", [])
+                        }
+                        self.data.append(processed_item)
         else:
             print(f"Warning: {data_path} not found. Using dummy data.")
-            for i in range(2):
-                self.data.append({
-                    "memory": "Initial memory state",
-                    "fact": f"User visited location {i}",
-                    "query": f"Where did user visit?",
-                    "answer": f"Location {i}",
-                    "context_memory": [
-                        MemoryItem(id=f"init_{i}", key="history", value="User likes travel", memory_type="UserMemory", tags=[])
-                    ]
-                })
+            assert False, f"{data_path} not found."
         
         self.tokenizer = tokenizer
 
@@ -117,11 +112,12 @@ class MemGRPOTrainer:
             tokenizer.pad_token = tokenizer.eos_token
         return tokenizer
 
-    def downstream_evaluate(self, fact, query, answer, context_memory, extraction_output, update_plan):
+    def downstream_evaluate(self, memory, fact, query, answer, context_memory, extraction_output, update_plan):
         """
         Delegate to mem_utils.MemoryEvaluator
         """
         return self.evaluator.evaluate(
+            memory=memory,
             fact=fact,
             query=query,
             answer=answer,
@@ -130,29 +126,11 @@ class MemGRPOTrainer:
             update_plan_output=update_plan
         )
 
-    def construct_extraction_prompt(self, fact, context_memory):
-        # Format conversation or fact for extraction
-        # context_memory might be used to simulate conversation history
-        conversation_str = f"User: {fact}\n" 
-        # Add some context if available? 
-        # For this task, we treat 'fact' as the user input to extract from.
-        return mem_utils.construct_extraction_prompt(conversation_str)
+    def construct_extraction_prompt(self, fact):
+        return mem_utils.construct_extraction_prompt(fact)
 
-    def construct_update_prompt(self, fact, context_memory, extraction_output):
-        # 1. Parse extraction output to get facts
-        ext_json = mem_utils.parse_json_from_text(extraction_output)
-        facts = []
-        if ext_json and "memory_list" in ext_json:
-            for m in ext_json["memory_list"]:
-                facts.append(m.get("value", ""))
-        
-        if not facts:
-            facts = [fact] # Fallback
-            
-        # 2. Convert context_memory (List[MemoryItem]) to List[Dict] for prompt
-        old_memory = mem_utils.memory_to_dict(context_memory)
-        
-        return mem_utils.construct_update_prompt(facts, old_memory)
+    def construct_update_prompt(self, context_memory, extraction_output):
+        return mem_utils.construct_update_prompt(context_memory, extraction_output)
 
     def generate_samples(self, batch_data):
         samples_list = []
@@ -161,13 +139,14 @@ class MemGRPOTrainer:
         bs = len(batch_data['fact'])
         
         for i in range(bs):
+            memory = batch_data['memory'][i]    
             fact = batch_data['fact'][i]
             query = batch_data['query'][i]
             answer = batch_data['answer'][i]
-            ctx_mem = batch_data['context_memory'][i] # List[MemoryItem]
+            ctx_mem = batch_data['context_memory'][i] 
             
             # --- Step 1: Extraction ---
-            prompt_ext = self.construct_extraction_prompt(fact, ctx_mem)
+            prompt_ext = self.construct_extraction_prompt(fact)
             
             msgs_ext = [{"role": "user", "content": prompt_ext}]
             text_ext = self.tokenizer.apply_chat_template(msgs_ext, add_generation_prompt=True, tokenize=False)
@@ -211,7 +190,7 @@ class MemGRPOTrainer:
             # --- Step 2: Update ---
             prompts_upd = []
             for r_text in resp_texts_ext:
-                prompts_upd.append(self.construct_update_prompt(fact, ctx_mem, r_text))
+                prompts_upd.append(self.construct_update_prompt(ctx_mem, r_text))
             
             # Note: prompts_upd might be different lengths, but tokenizer handles padding
             msgs_upd_list = [[{"role": "user", "content": p}] for p in prompts_upd]
@@ -236,7 +215,7 @@ class MemGRPOTrainer:
             rewards = []
             for j in range(self.args.num_generations):
                 # Pass original memory info. For simulation, fact + ctx_mem is enough.
-                r = self.downstream_evaluate(fact, query, answer, ctx_mem, resp_texts_ext[j], resp_texts_upd[j])
+                r = self.downstream_evaluate(memory, fact, query, answer, ctx_mem, resp_texts_ext[j], resp_texts_upd[j])
                 rewards.append(r)
             
             rewards_tensor = torch.tensor(rewards, device=self.args.device, dtype=torch.float32)

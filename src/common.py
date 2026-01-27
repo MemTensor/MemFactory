@@ -950,7 +950,10 @@ def format_conversation(messages: List[ConversationMessage]) -> str:
     """格式化对话为字符串"""
     lines = []
     for msg in messages:
-        lines.append(f"{msg.role}: [{msg.timestamp}] {msg.content}")
+        if not msg.timestamp or msg.timestamp == "":
+            lines.append(f"{msg.role}: {msg.content}")
+        else:
+            lines.append(f"{msg.role}: [{msg.timestamp}] {msg.content}")
     return "\n".join(lines)
 
 
