@@ -165,109 +165,132 @@ class MemGRPOTrainer:
         self.model.eval()
         
         bs = len(batch_data['fact'])
+        num_generations = self.args.num_generations
         
-        for i in range(bs):
-            memory = batch_data['memory'][i]    
-            fact = batch_data['fact'][i]
-            query = batch_data['query'][i]
-            answer = batch_data['answer'][i]
-            ctx_mem = batch_data['context_memory'][i] 
+        # --- Step 1: Extraction ---
+        prompts_ext = [self.construct_extraction_prompt(fact) for fact in batch_data['fact']]
+        msgs_ext_list = [[{"role": "user", "content": p}] for p in prompts_ext]
+        text_ext_list = [self.tokenizer.apply_chat_template(m, add_generation_prompt=True, tokenize=False) for m in msgs_ext_list]
+        
+        # Repeat prompts for num_generations
+        # Shape: [p1, p1, p1, p1, p2, p2, p2, p2, ...]
+        text_ext_batch = []
+        for t in text_ext_list:
+            text_ext_batch.extend([t] * num_generations)
             
-            # --- Step 1: Extraction ---
-            prompt_ext = self.construct_extraction_prompt(fact)
+        tokenized_ext = self.tokenizer(text_ext_batch, 
+                                     padding='longest', 
+                                     max_length=self.args.max_prompt_length, 
+                                     truncation=True, 
+                                     return_tensors='pt').to(self.args.device)
+        
+        with torch.no_grad():
+            ext_outputs = self.model.generate(**tokenized_ext, 
+                                            max_new_tokens=self.args.max_generate_length,
+                                            temperature=1.0)
             
-            msgs_ext = [{"role": "user", "content": prompt_ext}]
-            text_ext = self.tokenizer.apply_chat_template(msgs_ext, add_generation_prompt=True, tokenize=False)
+        prompt_len_ext = tokenized_ext['input_ids'].size(1)
+        resp_ids_ext = ext_outputs[:, prompt_len_ext:]
+        resp_texts_ext = self.tokenizer.batch_decode(resp_ids_ext, skip_special_tokens=True)
+
+        # Organize Extraction Samples
+        if self.args.train_extraction:
+            attention_mask_ext = (ext_outputs.ne(self.tokenizer.pad_token_id)).long()
+            action_mask_ext = (resp_ids_ext.ne(self.tokenizer.eos_token_id) & 
+                              resp_ids_ext.ne(self.tokenizer.pad_token_id)).long()
             
-            tokenized_ext = self.tokenizer([text_ext] * self.args.num_generations, 
-                                         padding='max_length', 
-                                         max_length=self.args.max_prompt_length, 
-                                         truncation=True, 
-                                         return_tensors='pt').to(self.args.device)
-            
-            with torch.no_grad():
-                ext_outputs = self.model.generate(**tokenized_ext, 
-                                                max_new_tokens=self.args.max_generate_length,
-                                                temperature=1.0)
-                
-            prompt_len_ext = tokenized_ext['input_ids'].size(1)
-            resp_ids_ext = ext_outputs[:, prompt_len_ext:]
-            resp_texts_ext = self.tokenizer.batch_decode(resp_ids_ext, skip_special_tokens=True)
-            
-            # Create Extraction Samples
-            if self.args.train_extraction:
-                attention_mask_ext = (ext_outputs.ne(self.tokenizer.pad_token_id)).long()
-                action_mask_ext = (resp_ids_ext.ne(self.tokenizer.eos_token_id) & 
-                                  resp_ids_ext.ne(self.tokenizer.pad_token_id)).long()
+            # Create samples per original batch item
+            for i in range(bs):
+                start_idx = i * num_generations
+                end_idx = start_idx + num_generations
                 
                 samples_ext = Samples(
-                    prompt_response_ids=ext_outputs,
-                    response_ids=resp_ids_ext,
-                    prompt=prompt_ext,
-                    answer=answer,
-                    attention_mask=attention_mask_ext,
-                    action_mask=action_mask_ext,
-                    num_actions=action_mask_ext.size(1),
-                    response_length=action_mask_ext.float().sum(dim=-1),
+                    prompt_response_ids=ext_outputs[start_idx:end_idx],
+                    response_ids=resp_ids_ext[start_idx:end_idx],
+                    prompt=prompts_ext[i],
+                    answer=batch_data['answer'][i],
+                    attention_mask=attention_mask_ext[start_idx:end_idx],
+                    action_mask=action_mask_ext[start_idx:end_idx],
+                    num_actions=action_mask_ext[start_idx:end_idx].size(1),
+                    response_length=action_mask_ext[start_idx:end_idx].float().sum(dim=-1),
                     step_type='extraction'
                 )
                 samples_list.append(samples_ext)
-            else:
-                samples_ext = None # Placeholder if not training extraction
 
-            # --- Step 2: Update ---
-            prompts_upd = []
-            for r_text in resp_texts_ext:
-                prompts_upd.append(self.construct_update_prompt(ctx_mem, r_text))
+        # --- Step 2: Update ---
+        prompts_upd = []
+        # Construct update prompts for all generated extractions
+        for i in range(bs):
+            ctx_mem = batch_data['context_memory'][i]
+            for j in range(num_generations):
+                global_idx = i * num_generations + j
+                prompts_upd.append(self.construct_update_prompt(ctx_mem, resp_texts_ext[global_idx]))
+        
+        msgs_upd_list = [[{"role": "user", "content": p}] for p in prompts_upd]
+        text_upd_list = [self.tokenizer.apply_chat_template(m, add_generation_prompt=True, tokenize=False) for m in msgs_upd_list]
+        
+        tokenized_upd = self.tokenizer(text_upd_list,
+                                     padding='longest',
+                                     max_length=self.args.max_prompt_length,
+                                     truncation=True,
+                                     return_tensors='pt').to(self.args.device)
+        
+        with torch.no_grad():
+            upd_outputs = self.model.generate(**tokenized_upd,
+                                            max_new_tokens=self.args.max_generate_length,
+                                            temperature=1.0)
+        
+        prompt_len_upd = tokenized_upd['input_ids'].size(1)
+        resp_ids_upd = upd_outputs[:, prompt_len_upd:]
+        resp_texts_upd = self.tokenizer.batch_decode(resp_ids_upd, skip_special_tokens=True)
+        
+        # Calculate Rewards (requires iterating through batch and generations)
+        all_rewards = []
+        for i in range(bs):
+            rewards_i = []
+            memory = batch_data['memory'][i]
+            fact = batch_data['fact'][i]
+            query = batch_data['query'][i]
+            answer = batch_data['answer'][i]
+            ctx_mem = batch_data['context_memory'][i]
             
-            # Note: prompts_upd might be different lengths, but tokenizer handles padding
-            msgs_upd_list = [[{"role": "user", "content": p}] for p in prompts_upd]
-            texts_upd = [self.tokenizer.apply_chat_template(m, add_generation_prompt=True, tokenize=False) for m in msgs_upd_list]
-            
-            tokenized_upd = self.tokenizer(texts_upd,
-                                         padding='max_length',
-                                         max_length=self.args.max_prompt_length,
-                                         truncation=True,
-                                         return_tensors='pt').to(self.args.device)
-            
-            with torch.no_grad():
-                upd_outputs = self.model.generate(**tokenized_upd,
-                                                max_new_tokens=self.args.max_generate_length,
-                                                temperature=1.0)
-            
-            prompt_len_upd = tokenized_upd['input_ids'].size(1)
-            resp_ids_upd = upd_outputs[:, prompt_len_upd:]
-            resp_texts_upd = self.tokenizer.batch_decode(resp_ids_upd, skip_special_tokens=True)
-            
-            # Calculate Rewards
-            rewards = []
-            
-            for j in range(self.args.num_generations):
-                r = self.downstream_evaluate(memory, fact, query, answer, ctx_mem, resp_texts_ext[j], resp_texts_upd[j])
-                rewards.append(r)
+            for j in range(num_generations):
+                global_idx = i * num_generations + j
+                r = self.downstream_evaluate(
+                    memory, fact, query, answer, ctx_mem, 
+                    resp_texts_ext[global_idx], 
+                    resp_texts_upd[global_idx]
+                )
+                rewards_i.append(r)
+            all_rewards.append(torch.tensor(rewards_i, device=self.args.device, dtype=torch.float32))
 
-            rewards_tensor = torch.tensor(rewards, device=self.args.device, dtype=torch.float32)
-            
-            # Attach rewards
-            if samples_ext:
-                samples_ext.rewards = rewards_tensor
+        # Organize Update Samples and Attach Rewards
+        for i in range(bs):
+            # Attach rewards to extraction samples if they exist
+            if self.args.train_extraction:
+                # Find the extraction sample corresponding to this batch item
+                # samples_list already contains bs extraction samples in order
+                samples_list[i].rewards = all_rewards[i]
             
             if self.args.train_update:
+                start_idx = i * num_generations
+                end_idx = start_idx + num_generations
+                
                 attention_mask_upd = (upd_outputs.ne(self.tokenizer.pad_token_id)).long()
                 action_mask_upd = (resp_ids_upd.ne(self.tokenizer.eos_token_id) & 
                                   resp_ids_upd.ne(self.tokenizer.pad_token_id)).long()
                 
                 samples_upd = Samples(
-                    prompt_response_ids=upd_outputs,
-                    response_ids=resp_ids_upd,
-                    prompt=prompts_upd,
-                    answer=answer,
-                    attention_mask=attention_mask_upd,
-                    action_mask=action_mask_upd,
-                    num_actions=action_mask_upd.size(1),
-                    response_length=action_mask_upd.float().sum(dim=-1),
+                    prompt_response_ids=upd_outputs[start_idx:end_idx],
+                    response_ids=resp_ids_upd[start_idx:end_idx],
+                    prompt=prompts_upd[start_idx:end_idx],
+                    answer=batch_data['answer'][i],
+                    attention_mask=attention_mask_upd[start_idx:end_idx],
+                    action_mask=action_mask_upd[start_idx:end_idx],
+                    num_actions=action_mask_upd[start_idx:end_idx].size(1),
+                    response_length=action_mask_upd[start_idx:end_idx].float().sum(dim=-1),
                     step_type='update',
-                    rewards=rewards_tensor
+                    rewards=all_rewards[i]
                 )
                 samples_list.append(samples_upd)
                 
@@ -331,6 +354,8 @@ class MemGRPOTrainer:
             if ref_log_probs is not None:
                 target_dict["ref_action_log_probs"].append(ref_log_probs)
 
+        # Helper to collate a single experience dict
+        import ipdb; ipdb.set_trace()
         def collate_exp(exp_dict):
             if not exp_dict["prompt_response_ids"]:
                 return None
