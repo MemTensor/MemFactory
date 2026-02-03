@@ -12,6 +12,7 @@ import os
 import swanlab
 import random
 import sys
+from tqdm import tqdm
 
 # Import mem_utils and src.common
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -50,6 +51,7 @@ class MemGRPOArguments:
     batch_size: int = 1
     train_extraction: bool = True
     train_update: bool = True
+    gradient_checkpointing: bool = True
 
 class MemoryDataset(Dataset):
     def __init__(self, data_path, tokenizer):
@@ -117,6 +119,10 @@ class MemGRPOTrainer:
                  ref_model=None):
         self.args = args
         self.model = model.to(self.args.device)
+        
+        if self.args.gradient_checkpointing:
+            self.model.gradient_checkpointing_enable()
+            
         self.tokenizer = self.get_tokenizer(tokenizer)
         
         self.ref_model = ref_model
@@ -297,7 +303,7 @@ class MemGRPOTrainer:
         return samples_list
 
     def get_action_log_probs(self, model, input_ids, attention_mask, num_actions):
-        output = model(input_ids, attention_mask=attention_mask)
+        output = model(input_ids, attention_mask=attention_mask, use_cache=False)
         logits = output.logits
         log_probs = F.log_softmax(logits[:, :-1, :], dim=-1)
         log_probs_labels = log_probs.gather(dim=-1, index=input_ids[:, 1:].unsqueeze(-1))
@@ -442,8 +448,11 @@ class MemGRPOTrainer:
         for epoch in range(self.args.epoch):
             
             dataloader = DataLoader(self.train_dataset, batch_size=self.args.batch_size, shuffle=False, collate_fn=collate_fn)
-            for idx, batch in enumerate(dataloader):
+            pbar = tqdm(enumerate(dataloader), total=len(dataloader), desc=f"Epoch {epoch + 1}/{self.args.epoch}")
+            for idx, batch in pbar:
                 experiences = self.generate_experiences(batch)
+                
+                pbar.set_postfix(step=idx, global_step=self.update_steps)
                 
                 if experiences:
                     # Inner Loop for GRPO/PPO
@@ -460,6 +469,8 @@ class MemGRPOTrainer:
                     
                     if self.update_steps % self.args.save_steps == 0:
                         self.save_model(f"checkpoint_{self.update_steps}")
+                
+                torch.cuda.empty_cache()
 
     def save_model(self, name):
         path = os.path.join(self.args.output_dir, name)
@@ -480,11 +491,23 @@ if __name__ == "__main__":
     
     print(f"Loading model from {args.model_name_or_path}...")
     tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, trust_remote_code=True)
+    
+    model_kwargs = {
+        "torch_dtype": torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16,
+        "device_map": "auto",
+        "trust_remote_code": True
+    }
+    
+    try:
+        import flash_attn
+        model_kwargs["attn_implementation"] = "flash_attention_2"
+        print("Using Flash Attention 2")
+    except ImportError:
+        print("Flash Attention 2 not found, using default attention")
+        
     model = AutoModelForCausalLM.from_pretrained(
         args.model_name_or_path, 
-        torch_dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16,
-        device_map="auto",
-        trust_remote_code=True
+        **model_kwargs
     )
     
     # Configure Training Arguments
@@ -496,8 +519,8 @@ if __name__ == "__main__":
         num_generations=4, # Group size
         save_steps=100,
         epoch=1,
-        max_prompt_length=3172,
-        max_generate_length=4096,
+        max_prompt_length=1024,
+        max_generate_length=2048,
         train_extraction=True,
         train_update=True
     )
