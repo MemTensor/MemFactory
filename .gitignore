@@ -1,6 +1,13 @@
 # MemOS home
 .memos/
 
+# RL train
+
+output/
+*/output/*
+output
+
+
 # Temporary files
 tmp/
 **/tmp_data/

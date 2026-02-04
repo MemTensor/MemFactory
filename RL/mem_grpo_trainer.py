@@ -135,7 +135,8 @@ class MemGRPOTrainer:
         self.input_buffer = [None] * self.args.gradient_accumulation_steps
         self.update_steps = 0
         self.global_steps = 0
-        self.scaler = torch.amp.GradScaler() if self.args.device == 'cuda' else None
+        # BFloat16 does not need GradScaler
+        self.scaler = torch.amp.GradScaler() if (self.args.device == 'cuda' and self.model.dtype != torch.bfloat16) else None
         
         # Initialize Evaluator
         self.evaluator = mem_utils.MemoryEvaluator()
@@ -482,7 +483,7 @@ if __name__ == "__main__":
     import argparse
     
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model_name_or_path", type=str, default="/home/models/Qwen3-1.7B", help="Path to the model")
+    parser.add_argument("--model_name_or_path", type=str, default="/home/models/qwen3-4b", help="Path to the model")
     parser.add_argument("--data_path", type=str, default="./scripts/training_data_with_context.jsonl", help="Path to the training data")
     parser.add_argument("--output_dir", type=str, default="./output/mem_grpo", help="Output directory")
     
@@ -519,8 +520,8 @@ if __name__ == "__main__":
         num_generations=4, # Group size
         save_steps=100,
         epoch=1,
-        max_prompt_length=1024,
-        max_generate_length=2048,
+        max_prompt_length=2048,
+        max_generate_length=4096,
         train_extraction=True,
         train_update=True
     )
