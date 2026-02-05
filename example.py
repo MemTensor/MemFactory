@@ -149,7 +149,7 @@ class MemoryPipelineRunner:
             "errors": []
         }
         
-        import ipdb; ipdb.set_trace()
+        # import ipdb; ipdb.set_trace()
 
         # ========== Step 1: 记忆抽取 ==========
         self._log("Step1-抽取", f"开始从 {len(messages)} 条消息中抽取记忆...")

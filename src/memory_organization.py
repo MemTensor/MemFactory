@@ -369,25 +369,25 @@ class EventStructureBuilder:
     
     def _extract_single_event(self, memory: MemoryItem) -> Optional[EventUnit]:
         """使用LLM抽取单个事件"""
-        prompt = f"""从以下记忆中抽取事件要素。
+        prompt = f"""Extract event elements from the following memory.
 
-记忆内容：{memory.value}
+Memory content: {memory.value}
 
-输出JSON格式：
+Output JSON format:
 {{
-    "agent": "执行主体（如：用户、系统、某人）",
-    "action": "动作",
-    "object": "作用对象",
-    "outcome": "结果",
-    "context": "上下文"
+    "agent": "Executing entity (e.g., user, system, someone)",
+    "action": "Action",
+    "object": "Target object",
+    "outcome": "Result",
+    "context": "Context"
 }}
 
-如果无法抽取有效事件，返回：{{"valid": false}}
+If unable to extract a valid event, return: {{"valid": false}}
 
-只输出JSON。"""
+Output JSON only."""
         
         response = self.llm.chat(
-            system_prompt="你是一个事件抽取专家。",
+            system_prompt="You are an event extraction expert.",
             user_prompt=prompt
         )
         
@@ -400,7 +400,7 @@ class EventStructureBuilder:
         return EventUnit(
             event_id=generate_id(),
             agent=result.get("agent"),
-            action=result.get("action", "记录"),
+            action=result.get("action", "record"),
             object=result.get("object"),
             outcome=result.get("outcome"),
             context=result.get("context"),
@@ -625,23 +625,23 @@ class HierarchyBuilder:
         # 收集记忆内容
         contents = [m.value for m in memories]
         
-        prompt = f"""从以下相关记忆中提炼一个通用模式/规律。
+        prompt = f"""Extract a general pattern/rule from the following related memories.
 
-记忆内容：
+Memory content:
 {chr(10).join(f"- {c}" for c in contents)}
 
-输出JSON格式：
+Output JSON format:
 {{
-    "label": "模式名称",
-    "condition": "适用条件",
-    "solution": "建议方案",
-    "verification": "验证方法"
+    "label": "Pattern name",
+    "condition": "Applicable conditions",
+    "solution": "Recommended solution",
+    "verification": "Verification method"
 }}
 
-只输出JSON。"""
+Output JSON only."""
         
         response = self.llm.chat(
-            system_prompt="你是一个模式归纳专家。",
+            system_prompt="You are a pattern induction expert.",
             user_prompt=prompt
         )
         
@@ -652,7 +652,7 @@ class HierarchyBuilder:
         
         return AbstractionNode(
             node_id=generate_id(),
-            label=result.get("label", "未知模式"),
+            label=result.get("label", "Unknown pattern"),
             condition=result.get("condition", ""),
             solution=result.get("solution", ""),
             verification=result.get("verification", ""),

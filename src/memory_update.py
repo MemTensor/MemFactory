@@ -300,28 +300,28 @@ class MemoryMerger:
     
     def _llm_merge(self, memories: List[MemoryItem]) -> str:
         """使用LLM合并记忆内容"""
-        prompt = f"""将以下{len(memories)}条相关记忆合并为一条简洁完整的综合记忆。
+        prompt = f"""Merge the following {len(memories)} related memories into one concise and complete comprehensive memory.
 
-记忆内容：
+Memory content:
 {chr(10).join(f"- [{m.created_at[:10]}] {m.value}" for m in sorted(memories, key=lambda x: x.created_at))}
 
-原则：
-1. 保留所有重要信息，去除冗余
-2. 按时间顺序整理
-3. 以最新信息为准
-4. 保持客观简洁
+Principles:
+1. Retain all important information, remove redundancy
+2. Organize chronologically
+3. Use latest information as reference
+4. Maintain objective conciseness
 
-直接输出合并后的记忆内容："""
+Output the merged memory content directly:"""
         
         response = self.llm.chat(
-            system_prompt="你是一个记忆整合专家。",
+            system_prompt="You are a memory integration expert.",
             user_prompt=prompt
         )
         
         if not response:
             # 回退：简单拼接
             contents = [m.value for m in sorted(memories, key=lambda x: x.created_at)]
-            return "综合记忆：" + "；".join(contents)
+            return "Comprehensive memory: " + "；".join(contents)
         
         return response.strip()
 
@@ -455,19 +455,19 @@ class ConflictResolver:
     
     def _check_conflict(self, mem_a: MemoryItem, mem_b: MemoryItem) -> Optional[Dict]:
         """使用LLM检测冲突"""
-        prompt = f"""判断以下两条记忆是否存在逻辑冲突。
+        prompt = f"""Determine whether the following two memories have logical conflicts.
 
-记忆A：{mem_a.value}（时间：{mem_a.created_at}）
-记忆B：{mem_b.value}（时间：{mem_b.created_at}）
+Memory A: {mem_a.value} (Time: {mem_a.created_at})
+Memory B: {mem_b.value} (Time: {mem_b.created_at})
 
-输出JSON格式：
-- 有冲突：{{"has_conflict": true, "conflict_type": "FACTUAL/PREFERENCE/TEMPORAL", "description": "冲突描述"}}
-- 无冲突：{{"has_conflict": false}}
+Output JSON format:
+- With conflict: {{"has_conflict": true, "conflict_type": "FACTUAL/PREFERENCE/TEMPORAL", "description": "Conflict description"}}
+- No conflict: {{"has_conflict": false}}
 
-只输出JSON。"""
+Output JSON only."""
         
         response = self.llm.chat(
-            system_prompt="你是一个记忆冲突检测专家。",
+            system_prompt="You are a memory conflict detection expert.",
             user_prompt=prompt
         )
         
@@ -481,7 +481,7 @@ class ConflictResolver:
             }
             return {
                 "type": type_map.get(result.get("conflict_type", "FACTUAL"), ConflictType.FACTUAL),
-                "description": result.get("description", "检测到冲突")
+                "description": result.get("description", "Conflict detected")
             }
         
         return None
@@ -498,31 +498,31 @@ class ConflictResolver:
         mem_b = memory_store.get(conflict.memory_id_b)
         
         if not mem_a or not mem_b:
-            return {"error": "记忆不存在"}
+            return {"error": "Memory does not exist"}
         
         # 使用LLM解决冲突
-        prompt = f"""解决以下记忆冲突。
+        prompt = f"""Resolve the following memory conflict.
 
-记忆A：{mem_a.value}
-- 更新时间：{mem_a.updated_at}
-- 来源可信度：{mem_a.source_credibility}
+Memory A: {mem_a.value}
+- Updated time: {mem_a.updated_at}
+- Source credibility: {mem_a.source_credibility}
 
-记忆B：{mem_b.value}
-- 更新时间：{mem_b.updated_at}
-- 来源可信度：{mem_b.source_credibility}
+Memory B: {mem_b.value}
+- Updated time: {mem_b.updated_at}
+- Source credibility: {mem_b.source_credibility}
 
-规则：
-1. 用户明确陈述 > 系统推断
-2. 来源可信度相近时，以最新记忆为准
-3. 可互补时建议合并
+Rules:
+1. User explicit statement > System inference
+2. When source credibility is similar, use the latest memory
+3. Suggest merging when complementary
 
-输出JSON格式：
-{{"action": "keep_a/keep_b/merge/coexist", "reason": "理由"}}
+Output JSON format:
+{{"action": "keep_a/keep_b/merge/coexist", "reason": "Reason"}}
 
-只输出JSON。"""
+Output JSON only."""
         
         response = self.llm.chat(
-            system_prompt="你是一个记忆冲突仲裁专家。",
+            system_prompt="You are a memory conflict arbitration expert.",
             user_prompt=prompt
         )
         
@@ -530,7 +530,7 @@ class ConflictResolver:
         
         if result:
             action = result.get("action", "keep_b")
-            reason = result.get("reason", "LLM决策")
+            reason = result.get("reason", "LLM decision")
             
             if action == "keep_a":
                 return {"action": "keep", "keep_id": mem_a.id, "deprecate_id": mem_b.id, "reason": reason}
@@ -543,8 +543,8 @@ class ConflictResolver:
         
         # 默认：时效性优先
         if mem_a.updated_at > mem_b.updated_at:
-            return {"action": "keep", "keep_id": mem_a.id, "deprecate_id": mem_b.id, "reason": "时效性优先"}
-        return {"action": "keep", "keep_id": mem_b.id, "deprecate_id": mem_a.id, "reason": "时效性优先"}
+            return {"action": "keep", "keep_id": mem_a.id, "deprecate_id": mem_b.id, "reason": "Timeliness priority"}
+        return {"action": "keep", "keep_id": mem_b.id, "deprecate_id": mem_a.id, "reason": "Timeliness priority"}
 
 
 # =============================================================================

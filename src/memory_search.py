@@ -252,18 +252,18 @@ class ActiveRetriever:
             检索结果
         """
         # 使用LLM分析上下文，提取可能需要的记忆主题
-        prompt = f"""分析以下上下文，提取可能需要回忆的历史信息主题。
+        prompt = f"""Analyze the following context and extract topics of historical information that may need to be recalled.
 
-上下文：
+Context:
 {context}
 
-输出JSON格式：
-{{"topics": ["主题1", "主题2", ...], "reason": "分析理由"}}
+Output JSON format:
+{{"topics": ["Topic 1", "Topic 2", ...], "reason": "Analysis reason"}}
 
-只输出JSON。"""
+Output JSON only."""
         
         response = self.llm.chat(
-            system_prompt="你是一个记忆分析专家。",
+            system_prompt="You are a memory analysis expert.",
             user_prompt=prompt
         )
         
@@ -274,7 +274,7 @@ class ActiveRetriever:
         topics = result.get("topics", [])
         
         if self.config.verbose:
-            print(f"[ActiveRetriever] 识别到主题: {topics}")
+            print(f"[ActiveRetriever] Identified topics: {topics}")
         
         # 基于主题进行检索
         query = Query(text=context)
@@ -312,7 +312,7 @@ class DTRRetriever:
         should_retrieve, uncertainty = self._decide_retrieval(query)
         
         if self.config.verbose:
-            print(f"[DTRRetriever] 不确定性: {uncertainty:.3f}, 需要检索: {should_retrieve}")
+            print(f"[DTRRetriever] Uncertainty: {uncertainty:.3f}, Should retrieve: {should_retrieve}")
         
         if not should_retrieve:
             return SearchResult(
@@ -342,17 +342,17 @@ class DTRRetriever:
             (是否检索, 不确定性分数)
         """
         # 使用LLM生成草稿答案并估计不确定性
-        prompt = f"""对以下问题生成一个简短的草稿回答，并评估你的确定程度。
+        prompt = f"""Generate a brief draft answer to the following question and evaluate your level of certainty.
 
-问题：{query.text}
+Question: {query.text}
 
-输出JSON格式：
-{{"draft_answer": "草稿回答", "confidence": 0.0-1.0, "reason": "确定程度的理由"}}
+Output JSON format:
+{{"draft_answer": "Draft answer", "confidence": 0.0-1.0, "reason": "Reason for certainty level"}}
 
-只输出JSON。"""
+Output JSON only."""
         
         response = self.llm.chat(
-            system_prompt="你是一个知识评估专家。",
+            system_prompt="You are a knowledge assessment expert.",
             user_prompt=prompt
         )
         
@@ -402,15 +402,15 @@ class DTRRetriever:
     
     def _generate_pseudo_context(self, query: Query) -> str:
         """生成伪上下文：补全用户意图"""
-        prompt = f"""将以下用户查询补全为更完整、更可检索的描述。
-不要编造事实，只是让查询更具体、更清晰。
+        prompt = f"""Expand the following user query into a more complete and searchable description.
+Do not fabricate facts, just make the query more specific and clear.
 
-用户查询：{query.text}
+User query: {query.text}
 
-输出补全后的描述（一段话）："""
+Output the expanded description (one paragraph):"""
         
         response = self.llm.chat(
-            system_prompt="你是一个查询扩展专家。",
+            system_prompt="You are a query expansion expert.",
             user_prompt=prompt
         )
         
