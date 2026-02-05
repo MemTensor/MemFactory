@@ -67,6 +67,44 @@ class ExtractionConfig:
 # Prompt模板
 # =============================================================================
 
+EXTRACTION_PROMPT_EN = """You are a memory extraction expert.
+Your task is to extract memories from the perspective of the user based on conversations between the user and assistant. This means identifying information that the user might remember—including their own experiences, thoughts, plans, or relevant statements and behaviors made by others (such as the assistant) that impact the user or are acknowledged by the user.
+
+Please perform the following actions:
+1. Identify information reflecting user experiences, beliefs, concerns, decisions, plans, or reactions—including meaningful information from the assistant that the user acknowledges or responds to.
+
+2. Clearly resolve all temporal, personal, and eventual references:
+   - Where possible, convert relative time expressions (such as "yesterday," "next Friday") to absolute dates using message timestamps.
+   - Clearly distinguish between event time and message time.
+   - Include specific locations if mentioned.
+   - Resolve all pronouns, aliases, and ambiguous references to full names or explicit identities.
+
+3. Always write from a third-person perspective, using "user" to refer to the user rather than first-person pronouns.
+
+4. Do not omit any information the user might remember.
+   - Include all key experiences, thoughts, emotional responses, and plans.
+   - Prioritize completeness and fidelity over conciseness.
+
+Return a valid JSON object with the following structure:
+
+{{
+  "memory_list": [
+    {{
+      "key": "<String, unique and concise memory title>",
+      "memory_type": "<String, either 'LongTermMemory' or 'UserMemory'>",
+      "value": "<Detailed, self-contained, and unambiguous memory statement>",
+      "tags": ["<List of relevant topic keywords>"]
+    }}
+  ],
+  "summary": "<A natural paragraph summarizing the above memories from the user's perspective, 120-200 words>"
+}}
+
+Conversation:
+{conversation}
+
+Your output:"""
+
+
 EXTRACTION_PROMPT_ZH = """您是记忆提取专家。
 您的任务是根据用户与助手之间的对话，从用户的角度提取记忆。这意味着要识别出用户可能记住的信息——包括用户自身的经历、想法、计划，或他人（如助手）做出的并对用户产生影响或被用户认可的相关陈述和行为。
 
@@ -103,6 +141,30 @@ EXTRACTION_PROMPT_ZH = """您是记忆提取专家。
 {conversation}
 
 您的输出："""
+
+
+REACT_SYSTEM_PROMPT_EN = """You are a memory extraction Agent based on the ReAct paradigm.
+You need to complete the memory extraction task through a "think-action" cycle.
+
+Available tools:
+1. SearchContext - Retrieve historical memories to supplement context (used for resolving references)
+2. UpdateBuffer - Temporarily store incomplete information in buffer
+3. CommitMemory - Submit complete memory extraction results
+4. Ignore - Determine as casual chat, do not extract memory
+
+Output format (JSON):
+{{
+  "thought": "your thinking process",
+  "action": "SearchContext/UpdateBuffer/CommitMemory/Ignore",
+  "action_params": {{
+    // SearchContext: {{"query": "retrieval query"}}
+    // UpdateBuffer: {{"fragment": "fragment to be temporarily stored"}}
+    // CommitMemory: {{"memory_list": [...], "summary": "..."}}
+    // Ignore: {{}}
+  }}
+}}
+
+Output JSON only."""
 
 
 REACT_SYSTEM_PROMPT = """你是一个基于ReAct范式的记忆抽取Agent。
@@ -157,11 +219,11 @@ class SimpleExtractor:
         conversation = format_conversation(messages)
         
         # 构建prompt
-        prompt = EXTRACTION_PROMPT_ZH.format(conversation=conversation)
+        prompt = EXTRACTION_PROMPT_EN.format(conversation=conversation)
         
         # 调用LLM
         response = self.llm.chat(
-            system_prompt="你是一个专业的记忆抽取专家。只输出JSON格式的结果。",
+            system_prompt="You are an expert of extracting memories, and you output JSON only",
             user_prompt=prompt
         )
         
@@ -331,19 +393,19 @@ class ReActExtractor:
     
     def _think(self, context: Dict, trace: List[str]) -> Optional[Dict]:
         """Agent思考：根据当前上下文决定下一步行动"""
-        user_prompt = f"""当前对话：
+        user_prompt = f"""current conversation:
 {context['current']}
 
-缓冲区内容：{context['buffer']}
+buffer content: {context['buffer']}
 
-历史检索结果：{context['rag_context']}
+history retrieval results: {context['rag_context']}
 
-思考轨迹：{trace}
+reasoning trace: {trace}
 
-请决定下一步行动。"""
+Please decide next move."""
         
         response = self.llm.chat(
-            system_prompt=REACT_SYSTEM_PROMPT,
+            system_prompt=REACT_SYSTEM_PROMPT_EN,
             user_prompt=user_prompt
         )
         
