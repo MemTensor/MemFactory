@@ -1,0 +1,3 @@
+# TODO: 我们要在这里做的事情是，仿造 ./locomoNo10.py
+# 创建一个用 LongMemEval 来评估模型性能的脚本。
+# TBD...

@@ -250,9 +250,8 @@ def construct_extraction_prompt(conversation) -> str:
         msg_fmt = ConversationMessage(
             role=msg["role"],
             content=msg["content"],
-            timestamp="",
+            timestamp=msg.get("timestamp", ""),
         )
-        msg_fmt.timestamp = ""
         conversation_msg_list.append(msg_fmt)
     conversation_str = format_conversation(conversation_msg_list)
     return EXTRACTION_PROMPT_EN.format(conversation=conversation_str)
