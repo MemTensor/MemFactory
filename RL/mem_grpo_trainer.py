@@ -287,8 +287,6 @@ class MemGRPOTrainer:
             # import pdb; pdb.set_trace()
             # Generate with vLLM
             resp_texts_ext, resp_ids_ext_raw = self._generate_with_vllm(text_ext_batch)
-            
-<<<<<<< HEAD
             # Format outputs similar to PyTorch generate
             # Create dummy input tensors for compatibility
             dummy_inputs = self.tokenizer(text_ext_batch, 
@@ -296,20 +294,7 @@ class MemGRPOTrainer:
                                         max_length=self.args.max_prompt_length, 
                                         truncation=True, 
                                         return_tensors='pt').to(self.args.device)
-=======
-        tokenized_ext = self.tokenizer(text_ext_batch, 
-                                     padding='longest', 
-                                     max_length=self.args.max_prompt_length, 
-                                     truncation=True, 
-                                     return_tensors='pt').to(self.args.device)
-        
-        prompt_lengths_ext = tokenized_ext['attention_mask'].sum(dim=1)
-        
-        with torch.no_grad():
-            ext_outputs = self.model.generate(**tokenized_ext, 
-                                            max_new_tokens=self.args.max_generate_length,
-                                            temperature=1.0)
->>>>>>> guozl
+
             
             prompt_len_ext = dummy_inputs['input_ids'].size(1)
             # Combine prompt + response for compatibility
@@ -375,8 +360,7 @@ class MemGRPOTrainer:
             for j in range(num_generations):
                 global_idx = i * num_generations + j
                 prompts_upd.append(self.construct_update_prompt(ctx_mem, resp_texts_ext[global_idx]))
-        
-<<<<<<< HEAD
+
         # Use vLLM for update generation if available, otherwise fall back to PyTorch
         if self.vllm_engine:
             # Generate with vLLM
@@ -413,28 +397,7 @@ class MemGRPOTrainer:
             prompt_len_upd = tokenized_upd['input_ids'].size(1)
             resp_ids_upd = upd_outputs[:, prompt_len_upd:]
             resp_texts_upd = self.tokenizer.batch_decode(resp_ids_upd, skip_special_tokens=True)
-=======
-        msgs_upd_list = [[{"role": "user", "content": p}] for p in prompts_upd]
-        text_upd_list = [self.tokenizer.apply_chat_template(m, add_generation_prompt=True, tokenize=False) for m in msgs_upd_list]
-        
-        tokenized_upd = self.tokenizer(text_upd_list,
-                                     padding='longest',
-                                     max_length=self.args.max_prompt_length,
-                                     truncation=True,
-                                     return_tensors='pt').to(self.args.device)
-        
-        prompt_lengths_upd = tokenized_upd['attention_mask'].sum(dim=1)
-        
-        with torch.no_grad():
-            upd_outputs = self.model.generate(**tokenized_upd,
-                                            max_new_tokens=self.args.max_generate_length,
-                                            temperature=1.0)
-        
-        prompt_len_upd = tokenized_upd['input_ids'].size(1)
-        resp_ids_upd = upd_outputs[:, prompt_len_upd:]
-        resp_texts_upd = self.tokenizer.batch_decode(resp_ids_upd, skip_special_tokens=True)
->>>>>>> guozl
-        
+
         # Calculate Rewards (requires iterating through batch and generations)
         all_rewards = []
         for i in range(bs):
