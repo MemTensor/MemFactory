@@ -3,7 +3,8 @@ import os
 import json
 import re
 import copy
-import ipdb
+from multiprocessing import Pool
+from tqdm import tqdm
 from datetime import datetime
 from typing import List, Dict, Any, Tuple, Set
 
@@ -22,10 +23,11 @@ from src.memory_update import MemoryUpdater, UpdateConfig
 
 
 class LoCoMoPipeline:
-    def __init__(self, data_path: str, output_path: str, verbose: bool = True):
+    def __init__(self, data_path: str = "", output_path: str = "", verbose: bool = False, num_workers: int = 1):
         self.data_path = data_path
         self.output_path = output_path
         self.verbose = verbose
+        self.num_workers = num_workers
         
         # Initialize Memory Components
         self.store = get_memory_store()
@@ -95,7 +97,8 @@ class LoCoMoPipeline:
         else:
             self.log("WARNING: Cannot reset real DB in this script.")
 
-    def process_sample(self, sample: Dict):
+    def process_sample(self, sample: Dict) -> List[Dict]:
+        local_results = []
         sample_id = sample.get('sample_id', 'unknown')
         self.log(f"Processing Sample: {sample_id}")
         
@@ -104,10 +107,12 @@ class LoCoMoPipeline:
         valid_qas = []
         
         for qa in qas:
-            # Check Answer Key (support 'answer' and 'adversarial_answer')
+            # Check Answer Key
+            # Skip adversarial QAs as they are hallucinations/negative examples
+            if qa.get('adversarial_answer'):
+                continue
+
             ans_str = qa.get('answer')
-            if not ans_str:
-                ans_str = qa.get('adversarial_answer')
             
             if not ans_str:
                 self.log(f"  [Warning] Skipping QA without answer: {qa.get('question', '')[:30]}...")
@@ -129,8 +134,8 @@ class LoCoMoPipeline:
             sessions = [e[0] for e in parsed_ev]
             min_s, max_s = min(sessions), max(sessions)
             
-            # Rule: If span > 3 sessions, ignore.
-            if (max_s - min_s) > 2:
+            # Rule: If span > 0 sessions (cross-session), ignore.
+            if (max_s - min_s) > 0:
                 continue
             
             # Find trigger (last evidence)
@@ -159,7 +164,7 @@ class LoCoMoPipeline:
                         pass
         
         for start_s in range(1, max_session + 1):
-            window_sessions = [start_s, start_s+1, start_s+2]
+            window_sessions = [start_s]
             
             self.log(f"  Window: {window_sessions}")
             
@@ -224,7 +229,7 @@ class LoCoMoPipeline:
                                 memory_state = copy.deepcopy(memory_state)
                                 
                                 f_data = [
-                                    {"role": m.role, "content": m.content, "dia_id": dia_id_buffer[i]} 
+                                    {"role": m.role, "content": m.content, "dia_id": dia_id_buffer[i], "timestamp": m.timestamp}
                                     for i, m in enumerate(dialogue_buffer)
                                 ]
                                 
@@ -237,7 +242,7 @@ class LoCoMoPipeline:
                                     "trigger_id": dia_id,
                                     "evidence": qa['evidence'],
                                 }
-                                self.results.append(record)
+                                local_results.append(record)
                                 
                                 qa['processed'] = True
                     
@@ -267,10 +272,8 @@ class LoCoMoPipeline:
                                 if deprecated_ids:
                                     for old_id in deprecated_ids:
                                         self.store.delete(old_id)
-                                    
-                            
 
-                    
+        return local_results
 
     def run(self):
         data = self.load_data()
@@ -280,22 +283,67 @@ class LoCoMoPipeline:
         with open(self.output_path, 'w', encoding='utf-8') as f:
             json.dump([], f)
 
-        for sample in data:
-            self.process_sample(sample)
+        all_results = []
+        
+        if self.num_workers > 1:
+            self.log(f"Running with {self.num_workers} workers")
+            with Pool(self.num_workers) as pool:
+                # Prepare args with index
+                tasks = [(i, sample, self.verbose) for i, sample in enumerate(data)]
+                # Use imap to show progress. imap guarantees results are returned in the order of input.
+                for res_list in tqdm(pool.imap(process_sample_wrapper, tasks), total=len(data), desc="Processing LoCoMo (Parallel)"):
+                    all_results.extend(res_list)
+                    
+                    # Checkpoint saving
+                    self.results = all_results
+                    with open(self.output_path, 'w', encoding='utf-8') as f:
+                        json.dump(all_results, f, ensure_ascii=False, indent=2)
+        else:
+            # Create temp dir for single process mode as well
+            temp_dir = "/home/guozl/project/MemRL/temp"
+            os.makedirs(temp_dir, exist_ok=True)
             
-            # (2) 增量保存：每次处理完一个sample就更新文件
-            # 使用重写方式 (rewrite) 确保 JSON 格式完整
-            self.log(f"Checkpoint: Saving {len(self.results)} records to {self.output_path}")
-            with open(self.output_path, 'w', encoding='utf-8') as f:
-                json.dump(self.results, f, ensure_ascii=False, indent=2)
+            for i, sample in enumerate(tqdm(data, desc="Processing LoCoMo")):
+                res_list = self.process_sample(sample)
+                
+                # Save temp file
+                with open(os.path.join(temp_dir, f"LOCOMO{i}.json"), 'w', encoding='utf-8') as f:
+                    json.dump(res_list, f, ensure_ascii=False, indent=2)
+
+                all_results.extend(res_list)
+                
+                # (2) 增量保存：每次处理完一个sample就更新文件
+                self.results = all_results
+                self.log(f"Checkpoint: Saving {len(self.results)} records to {self.output_path}")
+                with open(self.output_path, 'w', encoding='utf-8') as f:
+                    json.dump(self.results, f, ensure_ascii=False, indent=2)
+
+
+def process_sample_wrapper(args):
+    index, sample, verbose = args
+    # Initialize pipeline with empty paths as they are not used in process_sample
+    pipeline = LoCoMoPipeline(verbose=verbose)
+    result = pipeline.process_sample(sample)
+    
+    # Save individual result to temp for inspection
+    # Ensure directory exists (race condition safe since exist_ok=True)
+    temp_dir = "/home/guozl/project/MemRL/temp"
+    os.makedirs(temp_dir, exist_ok=True)
+    
+    temp_path = os.path.join(temp_dir, f"LOCOMO{index}.json")
+    with open(temp_path, 'w', encoding='utf-8') as f:
+        json.dump(result, f, ensure_ascii=False, indent=2)
+        
+    return result
 
 
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data", default="./datas/locomo10.json")
-    parser.add_argument("--output", default="./scripts/processed_locomo.json")
-    parser.add_argument("--limit", type=int, default=0, help="Limit number of samples to process (0 for all)")
+    parser.add_argument("--data", default=os.path.join(project_root, "datas", "locomo10.json"))
+    parser.add_argument("--output", default="./processed_locomo.json")
+    parser.add_argument("--limit", type=int, default=3, help="Limit number of samples to process (0 for all)")
+    parser.add_argument("--workers", type=int, default=1, help="Number of parallel workers")
     parser.add_argument("--dry-run", action="store_true", help="Use mock LLM for testing")
     args = parser.parse_args()
     
@@ -304,7 +352,7 @@ if __name__ == "__main__":
         from src.common import LLMClient
         LLMClient.chat = mock_llm_chat
 
-    pipeline = LoCoMoPipeline(args.data, args.output)
+    pipeline = LoCoMoPipeline(args.data, args.output, num_workers=args.workers)
     
     # Apply limit
     if args.limit > 0:

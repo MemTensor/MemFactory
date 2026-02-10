@@ -37,7 +37,8 @@ class Samples:
     attention_mask: Optional[torch.LongTensor]
     action_mask: Optional[torch.BoolTensor]
     num_actions: Union[int, torch.Tensor]
-    response_length: int
+    response_length: torch.Tensor
+    prompt_length: torch.Tensor
     step_type: str # 'extraction' or 'update'
     rewards: Optional[torch.Tensor] = None
 
@@ -185,7 +186,8 @@ class MemGRPOTrainer:
         self.input_buffer = [None] * self.args.gradient_accumulation_steps
         self.update_steps = 0
         self.global_steps = 0
-        self.scaler = torch.amp.GradScaler() if self.args.device == 'cuda' else None
+        # BFloat16 does not need GradScaler
+        self.scaler = torch.amp.GradScaler() if (self.args.device == 'cuda' and self.model.dtype != torch.bfloat16) else None
         
         # Initialize Evaluator
         self.evaluator = mem_utils.MemoryEvaluator()
@@ -286,6 +288,7 @@ class MemGRPOTrainer:
             # Generate with vLLM
             resp_texts_ext, resp_ids_ext_raw = self._generate_with_vllm(text_ext_batch)
             
+<<<<<<< HEAD
             # Format outputs similar to PyTorch generate
             # Create dummy input tensors for compatibility
             dummy_inputs = self.tokenizer(text_ext_batch, 
@@ -293,6 +296,20 @@ class MemGRPOTrainer:
                                         max_length=self.args.max_prompt_length, 
                                         truncation=True, 
                                         return_tensors='pt').to(self.args.device)
+=======
+        tokenized_ext = self.tokenizer(text_ext_batch, 
+                                     padding='longest', 
+                                     max_length=self.args.max_prompt_length, 
+                                     truncation=True, 
+                                     return_tensors='pt').to(self.args.device)
+        
+        prompt_lengths_ext = tokenized_ext['attention_mask'].sum(dim=1)
+        
+        with torch.no_grad():
+            ext_outputs = self.model.generate(**tokenized_ext, 
+                                            max_new_tokens=self.args.max_generate_length,
+                                            temperature=1.0)
+>>>>>>> guozl
             
             prompt_len_ext = dummy_inputs['input_ids'].size(1)
             # Combine prompt + response for compatibility
@@ -345,6 +362,7 @@ class MemGRPOTrainer:
                     action_mask=action_mask_ext[start_idx:end_idx],
                     num_actions=action_mask_ext[start_idx:end_idx].size(1),
                     response_length=action_mask_ext[start_idx:end_idx].float().sum(dim=-1),
+                    prompt_length=prompt_lengths_ext[start_idx:end_idx],
                     step_type='extraction'
                 )
                 samples_list.append(samples_ext)
@@ -358,6 +376,7 @@ class MemGRPOTrainer:
                 global_idx = i * num_generations + j
                 prompts_upd.append(self.construct_update_prompt(ctx_mem, resp_texts_ext[global_idx]))
         
+<<<<<<< HEAD
         # Use vLLM for update generation if available, otherwise fall back to PyTorch
         if self.vllm_engine:
             # Generate with vLLM
@@ -394,6 +413,27 @@ class MemGRPOTrainer:
             prompt_len_upd = tokenized_upd['input_ids'].size(1)
             resp_ids_upd = upd_outputs[:, prompt_len_upd:]
             resp_texts_upd = self.tokenizer.batch_decode(resp_ids_upd, skip_special_tokens=True)
+=======
+        msgs_upd_list = [[{"role": "user", "content": p}] for p in prompts_upd]
+        text_upd_list = [self.tokenizer.apply_chat_template(m, add_generation_prompt=True, tokenize=False) for m in msgs_upd_list]
+        
+        tokenized_upd = self.tokenizer(text_upd_list,
+                                     padding='longest',
+                                     max_length=self.args.max_prompt_length,
+                                     truncation=True,
+                                     return_tensors='pt').to(self.args.device)
+        
+        prompt_lengths_upd = tokenized_upd['attention_mask'].sum(dim=1)
+        
+        with torch.no_grad():
+            upd_outputs = self.model.generate(**tokenized_upd,
+                                            max_new_tokens=self.args.max_generate_length,
+                                            temperature=1.0)
+        
+        prompt_len_upd = tokenized_upd['input_ids'].size(1)
+        resp_ids_upd = upd_outputs[:, prompt_len_upd:]
+        resp_texts_upd = self.tokenizer.batch_decode(resp_ids_upd, skip_special_tokens=True)
+>>>>>>> guozl
         
         # Calculate Rewards (requires iterating through batch and generations)
         all_rewards = []
@@ -440,6 +480,7 @@ class MemGRPOTrainer:
                     action_mask=action_mask_upd[start_idx:end_idx],
                     num_actions=action_mask_upd[start_idx:end_idx].size(1),
                     response_length=action_mask_upd[start_idx:end_idx].float().sum(dim=-1),
+                    prompt_length=prompt_lengths_upd[start_idx:end_idx],
                     step_type='update',
                     rewards=all_rewards[i]
                 )
@@ -486,6 +527,8 @@ class MemGRPOTrainer:
             swanlab.log({
                             f"reward_mean/{samples.step_type}": mean_reward.item(),
                             f"reward_std/{samples.step_type}": std_reward.item(),
+                            f"prompt_len_mean/{samples.step_type}": samples.prompt_length.float().mean().item(),
+                            f"response_len_mean/{samples.step_type}": samples.response_length.float().mean().item(),
                             "reward_mean": mean_reward.item(), # 全局平均
                             "reward_std": std_reward.item()    # 全局标准差
                         })
@@ -639,8 +682,8 @@ if __name__ == "__main__":
     import argparse
     
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model_name_or_path", type=str, default="/home/models/Qwen3-1.7B", help="Path to the model")
-    parser.add_argument("--data_path", type=str, default="/home/datasets/temp/training_data_with_context.jsonl", help="Path to the training data")
+    parser.add_argument("--model_name_or_path", type=str, default="/home/models/qwen3-4b", help="Path to the model")
+    parser.add_argument("--data_path", type=str, default="./datas/train.jsonl", help="Path to the training data")
     parser.add_argument("--output_dir", type=str, default="./output/mem_grpo", help="Output directory")
     parser.add_argument("--use_vllm", action="store_true", help="Use vLLM for faster inference")
     parser.add_argument("--vllm_gpu_memory_utilization", type=float, default=0.8, help="GPU memory utilization for vLLM")
@@ -679,8 +722,8 @@ if __name__ == "__main__":
         num_generations=4, # Group size
         save_steps=100,
         epoch=1,
-        max_prompt_length=1024,
-        max_generate_length=2048,
+        max_prompt_length=2548,
+        max_generate_length=5520,
         train_extraction=True,
         train_update=True,
         use_vllm=getattr(args, 'use_vllm', False),  # 使用命令行参数

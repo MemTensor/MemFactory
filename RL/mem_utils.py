@@ -250,9 +250,8 @@ def construct_extraction_prompt(conversation) -> str:
         msg_fmt = ConversationMessage(
             role=msg["role"],
             content=msg["content"],
-            timestamp="",
+            timestamp=msg.get("timestamp", ""),
         )
-        msg_fmt.timestamp = ""
         conversation_msg_list.append(msg_fmt)
     conversation_str = format_conversation(conversation_msg_list)
     return EXTRACTION_PROMPT_EN.format(conversation=conversation_str)
@@ -365,7 +364,7 @@ class MemoryEvaluator:
             self.apply_update_plan(context_memory, upd_json, extraction_output)
             
             # 5. Retrieval
-            retrieved_docs = self.retrieve(query, top_k=15)
+            retrieved_docs = self.retrieve(query, top_k=30)
             context_str = "\n".join([f"- {m.key}: {m.value}" for m in retrieved_docs])
             
             # 6. QA

@@ -153,10 +153,10 @@ class ConversationMessage:
     """对话消息"""
     role: str           # user / assistant / system
     content: str        # 消息内容
-    timestamp: str = "" # 时间戳
+    timestamp: Optional[str] = None # 时间戳
     
     def __post_init__(self):
-        if not self.timestamp:
+        if self.timestamp is None:
             self.timestamp = datetime.now().isoformat()
 
 
@@ -952,7 +952,7 @@ def format_conversation(messages: List[ConversationMessage]) -> str:
     """格式化对话为字符串"""
     lines = []
     for msg in messages:
-        if not msg.timestamp or msg.timestamp == "":
+        if not msg.timestamp or msg.timestamp == "" or msg.timestamp == " ":
             lines.append(f"{msg.role}: {msg.content}")
         else:
             lines.append(f"{msg.role}: [{msg.timestamp}] {msg.content}")
