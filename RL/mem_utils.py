@@ -346,18 +346,20 @@ class MemoryEvaluator:
         
         # 0. Format Check & Parsing
         ext_json = parse_json_from_text(extraction_output)
+        if ext_json != {} and "memory_list" in ext_json:
+            extraction_reward = 0.5
+        else:
+            extraction_reward = 0.0
+        # If update_plan_output is empty, we only evaluate extraction format
+        if not update_plan_output or not update_plan_output.strip():
+            return extraction_reward, 0.0, 0.0
+
         upd_json = parse_json_from_text(update_plan_output)
+        if upd_json != {} and "operations" in upd_json:
+            update_reward = 0.5
+        else:
+            update_reward = 0.0
         
-        # is_ext_valid = isinstance(ext_json, dict) and "memory_list" in ext_json
-        # is_upd_valid = isinstance(upd_json, dict) and "operations" in upd_json
-        
-        # if not is_ext_valid and not is_upd_valid:
-        #     return -0.2
-        # if not is_ext_valid or not is_upd_valid:
-        #     return -0.15
-        
-        extraction_reward = 0.5 if ext_json != {} else 0
-        update_reward = 0.5 if upd_json != {} else 0
         if update_reward == 0:
             print("warning, the update plan is empty!")
 
@@ -367,18 +369,12 @@ class MemoryEvaluator:
             # 1. Reset Memory Store
             self.reset_memory(memory)
             
-            # 2. Apply Update (Using already parsed json to avoid double parsing issues, though apply_update_plan currently takes json object or relies on helper)
-            # Refactoring apply_update_plan to accept parsed objects or ensuring safe usage
-            # For now, we will pass the strings as before, but we know they are valid JSON structure-wise
-            # Wait, apply_update_plan calls prepare_memory_lists which calls parse_json_from_text again.
-            # Since we validated above, it should be fine.
-            
             update_err_flag = self.apply_update_plan(context_memory, upd_json, extraction_output)
             if update_err_flag:
                 update_reward = 0
 
             # 5. Retrieval
-            retrieved_docs = self.retrieve(query, top_k=30)
+            retrieved_docs = self.retrieve(query, top_k=48)
             context_str = "\n".join([f"- {m.key}: {m.value}" for m in retrieved_docs])
             
             # 6. QA

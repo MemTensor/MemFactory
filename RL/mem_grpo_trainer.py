@@ -436,12 +436,20 @@ class MemGRPOTrainer:
                 update_rewards.append(update_reward)
                 accuracy_rewards.append(accuracy_reward)
                 
-                # Modified Reward Allocation based on user request
-                # Extraction Sample Reward = Extraction Format Reward + Final Correctness Reward
-                rewards_i_ext.append(extraction_reward + accuracy_reward)
+                # Extraction Sample Reward
+                if extraction_reward > 0:
+                    # rewards_i_ext.append(extraction_reward + accuracy_reward)
+                    rewards_i_ext.append(extraction_reward)
+                else:
+                    rewards_i_ext.append(0.0)
+                    
                 
-                # Update Sample Reward = Update Format Reward + Final Correctness Reward
-                rewards_i_upd.append(update_reward + accuracy_reward)
+                # Update Sample Reward
+                if update_reward > 0:
+                    # rewards_i_upd.append(update_reward + accuracy_reward)
+                    rewards_i_upd.append(update_reward)
+                else:
+                    rewards_i_upd.append(0.0)
                 
             all_rewards_ext.append(torch.tensor(rewards_i_ext, device=self.args.device, dtype=torch.float32))
             all_rewards_upd.append(torch.tensor(rewards_i_upd, device=self.args.device, dtype=torch.float32))
