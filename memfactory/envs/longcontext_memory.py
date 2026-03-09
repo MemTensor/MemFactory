@@ -63,6 +63,7 @@ class LongContextMemoryEnv(BaseEnv):
                         })
                 except Exception as e:
                     print(f"Error loading parquet file: {e}")
+            print(f"Loaded {len(self.data)} samples from {self.data_path}")
         else:
             print(f"Warning: {self.data_path} not found.")
 

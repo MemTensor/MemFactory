@@ -11,6 +11,7 @@ from torch.utils.data import DataLoader
 from ..common.registry import TRAINER_REGISTRY, ENV_REGISTRY, AGENT_REGISTRY
 from ..common.utils import LLMClient
 from ..modules.base import Samples
+import ipdb
 
 @dataclass
 class MemGRPOArguments:
@@ -32,10 +33,11 @@ class MemGRPOArguments:
     max_chunk_number: int = 5
     num_generations: int = 4
     max_generate_length: int = 2048
+    chunk_size: int = 2048
     
     # Training control
-    train_extraction: bool = True
-    train_update: bool = True
+    train_extraction: bool = False
+    train_update: bool = False
 
 @TRAINER_REGISTRY.register("mem_grpo")
 class MemGRPOTrainer:
@@ -151,9 +153,31 @@ class MemGRPOTrainer:
         self.tokenizer.save_pretrained(path)
         
     def _prepare_train_inputs(self, samples):
+        inference_batch_size = 4
+        total_samples = samples.prompt_response_ids.size(0)
+        
+        all_old_log_probs = []
+        all_ref_log_probs = []
+        
         with torch.no_grad():
-            old_lp = self.get_action_log_probs(self.model, samples.prompt_response_ids, samples.attention_mask, samples.num_actions)
-            ref_lp = self.get_action_log_probs(self.ref_model, samples.prompt_response_ids, samples.attention_mask, samples.num_actions) if self.ref_model else None
+            for i in range(0, total_samples, inference_batch_size):
+                end_i = min(i + inference_batch_size, total_samples)
+                
+                # Slice the batch
+                mini_ids = samples.prompt_response_ids[i:end_i]
+                mini_mask = samples.attention_mask[i:end_i]
+                
+                # Compute old log probs
+                mini_old_lp = self.get_action_log_probs(self.model, mini_ids, mini_mask, samples.num_actions)
+                all_old_log_probs.append(mini_old_lp)
+                
+                # Compute ref log probs
+                if self.ref_model:
+                    mini_ref_lp = self.get_action_log_probs(self.ref_model, mini_ids, mini_mask, samples.num_actions)
+                    all_ref_log_probs.append(mini_ref_lp)
+        
+        old_lp = torch.cat(all_old_log_probs, dim=0)
+        ref_lp = torch.cat(all_ref_log_probs, dim=0) if self.ref_model else None
         
         return {
             "prompt_response_ids": samples.prompt_response_ids,
@@ -165,16 +189,16 @@ class MemGRPOTrainer:
         }
 
     def train(self, data_path):
+        step_count = 0
         # 1. Initialize Env
         EnvClass = ENV_REGISTRY.get(self.args.env_type)
         env = EnvClass(data_path, self.tokenizer)
-        
         # 2. Initialize Agent
         AgentClass = AGENT_REGISTRY.get(self.args.agent_type)
         agent = AgentClass(
             self.tokenizer, 
             device=self.args.device,
-            chunk_size=2048, 
+            chunk_size=self.args.chunk_size, 
             max_chunk_number=self.args.max_chunk_number,
             num_generations=self.args.num_generations,
             max_generate_length=self.args.max_generate_length
@@ -209,21 +233,16 @@ class MemGRPOTrainer:
                     for _ in range(self.args.num_iterations):
                         # Iterate over all types of samples returned by rollout
                         for step_type, samples in samples_dict.items():
-                            # Check if we should train this step type
-                            # Logic: 
-                            # If step_type is 'extraction' -> check args.train_extraction
-                            # If step_type is 'update' -> check args.train_update
-                            # If step_type is 'default' (Naive Agent) -> Always train
                             
                             should_train = True
                             if step_type == 'extraction' and not self.args.train_extraction:
                                 should_train = False
                             if step_type == 'update' and not self.args.train_update:
                                 should_train = False
-                                
                             if should_train and samples.rewards is not None:
                                 train_inputs = self._prepare_train_inputs(samples)
-                                self.train_step(train_inputs, idx)
+                                self.train_step(train_inputs, step_count)
+                                step_count += 1
                     
                     self.update_steps += 1
                     if self.update_steps % self.args.save_steps == 0:

@@ -69,7 +69,7 @@ class NaiveExtractor(BaseModule):
         # Returns Samples object.
         pass # Not implemented as standalone for now, used by MemoryR1Agent
 
-    def generate(self, model, facts: List[str], num_generations: int = 1) -> Tuple[List[str], Samples]:
+    def generate(self, model, facts: List[str], num_generations: int = 1) -> tuple[List[str], Samples]:
         """
         Generate extraction samples.
         Returns:

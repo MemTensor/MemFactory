@@ -6,8 +6,8 @@ set -x
 # ----------------------------------------------------------------------------
 
 # 1. Paths
-DATA_PATH="./data/eval_50.json" 
-MODEL_NAME="Qwen2.5-3B-Instruct"
+DATA_PATH="./datas/eval_50.json" 
+MODEL_NAME="Qwen3-4B-Instruct"
 MODEL_PATH="/home/models/${MODEL_NAME}"
 OUTPUT_DIR="./output/mem_factory_qwen3_4b"
 
@@ -54,4 +54,5 @@ python3 examples/train_mem_grpo.py \
     --save_steps "$SAVE_STEPS" \
     --env_type "$ENV_TYPE" \
     --agent_type "$AGENT_TYPE" \
-    --wandb_name "memfactory_${AGENT_TYPE}_${ENV_TYPE}_${MODEL_NAME}"
+    --wandb_name "memfactory_${AGENT_TYPE}_${ENV_TYPE}_${MODEL_NAME}" \
+    --epoch 5

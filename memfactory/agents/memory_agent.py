@@ -20,7 +20,6 @@ class MemoryAgent(BaseAgent):
     def rollout(self, model: Any, batch_data: Dict[str, Any], **kwargs) -> Optional[Samples]:
         # Delegate rollout logic to the module
         results = self.module.rollout(model, batch_data, **kwargs)
-        
         if not results:
             return None
 

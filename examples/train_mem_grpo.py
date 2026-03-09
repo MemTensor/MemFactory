@@ -6,7 +6,7 @@ from transformers import AutoTokenizer, AutoModelForCausalLM, HfArgumentParser
 import swanlab
 
 # Add project root to sys.path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from memfactory.trainers.mem_grpo_trainer import MemGRPOTrainer, MemGRPOArguments
 import memfactory.envs  # Register envs
@@ -59,7 +59,7 @@ def main():
     if args.wandb_name:
         os.environ["SWANLAB_API_KEY"] = "Zkrggz0kWlnEuNRu5r4dz" # Keep the key from original file
         swanlab.init(
-            project="MemFactory",
+            project="Debug",
             config=vars(grpo_args),
             name=args.wandb_name
         )
