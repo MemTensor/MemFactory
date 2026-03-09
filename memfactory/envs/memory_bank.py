@@ -9,10 +9,8 @@ from ..common.utils import parse_json_from_text, LLMClient
 
 # Import src.common dependencies
 try:
-    import sys
-    sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-    from src.common import MemoryItem, generate_id, get_memory_store
-    from src.common import format_conversation, ConversationMessage
+    from .memory_bank_utils import MemoryItem, generate_id, get_memory_store
+    from .memory_bank_utils import format_conversation, ConversationMessage
 except ImportError:
     pass # Assume setup in other files
 
@@ -90,9 +88,8 @@ class MemoryBankEnv(BaseEnv):
     def __getitem__(self, idx):
         return self.data[idx]
 
-    def prepare_memory_lists(self, context_memory, extraction_output):
+    def get_id_map(self, context_memory, extraction_output):
         # Need to reconstruct ID mapping for evaluation
-        # Copied logic from mem_utils
         context_memory_objs = [ MemoryItem.from_dict(mem) for mem in context_memory ]
         id_counter = 1
         id_map = {}
@@ -126,7 +123,7 @@ class MemoryBankEnv(BaseEnv):
         all_rewards_ext = []
         all_rewards_upd = []
         
-        # Parallelize this if slow
+        # TODO: Parallelize this if slow
         for i in range(bs):
             memory = ground_truths['memory'][i]
             # fact = ground_truths['fact'][i] # Not needed for eval logic here
@@ -163,7 +160,7 @@ class MemoryBankEnv(BaseEnv):
                         # Need to parse update plan and apply to store
                         # Logic copied from mem_utils.apply_update_plan
                         
-                        id_map = self.prepare_memory_lists(ctx_mem, ext_out)
+                        id_map = self.get_id_map(ctx_mem, ext_out)
                         update_err = False
                         
                         if "operations" in upd_json:
@@ -176,18 +173,23 @@ class MemoryBankEnv(BaseEnv):
                                 
                                 if origin_type == "context":
                                     if action == "DEL": self.store.delete(origin_obj.id)
+                                    elif action != "NONE": update_err = True; break
                                 elif origin_type == "candidate":
                                     if action in ["ADD", "UPDATE"]:
                                         key = op.get("key", origin_obj.get("key"))
                                         value = op.get("value", origin_obj.get("value"))
-                                        new_mem = MemoryItem(id=generate_id(), key=key, value=value)
+                                        new_mem = MemoryItem(id=generate_id(), 
+                                            key=key, value=value,
+                                            memory_type=origin_obj.get("memory_type", "UserMemory"),
+                                            tags=origin_obj.get("tags", [])
+                                        )
                                         self.store.save(new_mem)
                         else:
                             update_err = True
-                            
+
                         if not update_err:
                             # Retrieve
-                            results = self.store.search_similar(query, top_k=3) # Use small k for speed
+                            results = self.store.search_similar(query, top_k=30)
                             retrieved_docs = [m for m, s in results]
                             context_str = "\n".join([f"- {m.key}: {m.value}" for m in retrieved_docs])
                             
@@ -198,8 +200,10 @@ class MemoryBankEnv(BaseEnv):
                             # Judge
                             judge_prompt = JUDGE_PROMPT.format(question=query, answer=answer, prediction=pred_answer)
                             judge_result = self.llm_client.chat("You are an impartial judge.", judge_prompt)
-                            
-                            if "True" in judge_result:
+                            if "<think>" in judge_result:
+                                judge_result = judge_result.split("</think>")[-1].strip() if "</think>" in judge_result else judge_result[-100:].strip()
+                    
+                            if "True" in judge_result[-100:]:
                                 accuracy_reward = 1.0
                     except Exception as e:
                         # print(f"Eval Error: {e}")

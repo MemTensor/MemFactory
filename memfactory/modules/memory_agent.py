@@ -122,4 +122,5 @@ class RecurrentMemoryModule(BaseModule):
         return results
 
     def inference(self, batch_data: Dict[str, Any], **kwargs) -> List[str]:
+        # using vllm server instead of pytorch.model
         return []

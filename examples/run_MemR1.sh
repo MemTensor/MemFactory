@@ -22,9 +22,10 @@ AGENT_TYPE="memory_r1_agent"
 LR=5e-7
 BETA=0.1
 MAX_GEN_LEN=2048
-GRAD_ACC_STEPS=1
-SAVE_STEPS=500
+GRAD_ACC_STEPS=16
+SAVE_STEPS=1000
 BATCH_SIZE=1
+NUM_GENS=8
 
 # Training Control
 # Default: Train both Extractor and Updater
@@ -50,8 +51,9 @@ python3 examples/train_mem_grpo.py \
     --max_generate_length "$MAX_GEN_LEN" \
     --save_steps "$SAVE_STEPS" \
     --batch_size "$BATCH_SIZE" \
+    --num_generations "$NUM_GENS" \
     --env_type "$ENV_TYPE" \
     --agent_type "$AGENT_TYPE" \
     --wandb_name "mem_r1_${AGENT_TYPE}_${ENV_TYPE}_${MODEL_NAME}" \
-    # --train_extraction \ # Implicitly true by default in arguments
-    # --train_update \     # Implicitly true by default in arguments
+    --train_extraction \
+    --train_update

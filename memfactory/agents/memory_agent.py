@@ -56,7 +56,7 @@ class MemoryAgent(BaseAgent):
         attention_mask = torch.tensor([p + r for p, r in zip(prompt_masks, response_att_masks)], device=self.device, dtype=torch.long)
         action_mask = torch.tensor(response_masks, device=self.device, dtype=torch.bool)
         advantages_tensor = torch.tensor(advantages, dtype=torch.float32, device=self.device)
-
+        assert max_r_len == action_mask.size(1), "Action mask length must match response length"
         samples = Samples(
             prompt_response_ids=input_ids,
             attention_mask=attention_mask,

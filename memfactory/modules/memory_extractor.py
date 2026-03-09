@@ -3,6 +3,7 @@ from typing import Dict, Any, List, Optional
 from ..common.registry import MODULE_REGISTRY
 from .base import BaseModule, Samples
 from ..common.utils import TEMPLATE
+from ..envs.memory_bank_utils import format_conversation, ConversationMessage
 
 # We need to define the specific prompts for Extraction
 # Copied from reference code
@@ -49,7 +50,9 @@ class NaiveExtractor(BaseModule):
         super().__init__(tokenizer, device)
         self.max_prompt_length = kwargs.get("max_prompt_length", 4096)
         self.max_generate_length = kwargs.get("max_generate_length", 2048)
-
+        self.tokenizer.padding_side = "left"
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
     def _generate_with_pytorch(self, model, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
         with torch.no_grad():
             outputs = model.generate(
@@ -67,16 +70,24 @@ class NaiveExtractor(BaseModule):
         # This module is usually called by a parent Orchestrator, but can be standalone.
         # If standalone, it needs 'fact' in batch_data.
         # Returns Samples object.
+        # 解释，rollout 要求返回含有奖励的对象，这需要新的架构和算法
+        # 目前并没有收录可以单独训练抽取（抽取之后就能获取奖励）的算法，我们鼓励您进行这方面的扩展。
         pass # Not implemented as standalone for now, used by MemoryR1Agent
 
-    def generate(self, model, facts: List[str], num_generations: int = 1) -> tuple[List[str], Samples]:
-        """
-        Generate extraction samples.
-        Returns:
-            generated_texts: List[str] (flattened)
-            samples: Samples object (without rewards)
-        """
-        prompts = [EXTRACTION_PROMPT_EN.format(conversation=fact) for fact in facts]
+    def generate(self, model, facts: List[List[Dict]], num_generations: int = 1) -> tuple[List[str], List[str]]:
+        prompts = []
+        for fact in facts:
+            # fact is a list of dicts: [{"role": "user", "content": "...", "timestamp": "..."}]
+            conversation_msg_list = []
+            for msg in fact:
+                msg_fmt = ConversationMessage(
+                    role=msg.get("role", "user"),
+                    content=msg.get("content", ""),
+                    timestamp=msg.get("timestamp", "")
+                )
+                conversation_msg_list.append(msg_fmt)
+            conversation_str = format_conversation(conversation_msg_list)
+            prompts.append(EXTRACTION_PROMPT_EN.format(conversation=conversation_str))
         
         # Duplicate for num_generations
         batch_prompts = []
@@ -93,22 +104,8 @@ class NaiveExtractor(BaseModule):
         generated_ids = outputs[:, input_len:]
         generated_texts = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
         
-        # Create Samples object
-        attention_mask = (outputs.ne(self.tokenizer.pad_token_id)).long()
-        action_mask = (generated_ids.ne(self.tokenizer.eos_token_id) & 
-                       generated_ids.ne(self.tokenizer.pad_token_id)).long()
-        
-        samples = Samples(
-            prompt_response_ids=outputs,
-            attention_mask=attention_mask,
-            action_mask=action_mask,
-            num_actions=action_mask.size(1),
-            rewards=None, # To be filled later
-            step_type='extraction',
-            response_length=action_mask.float().sum(dim=-1)
-        )
-        
-        return generated_texts, samples
+        return formatted_prompts, generated_texts
 
     def inference(self, batch_data, **kwargs):
+        # using vllm server
         return []

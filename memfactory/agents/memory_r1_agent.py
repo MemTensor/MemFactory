@@ -19,10 +19,68 @@ class MemoryR1Agent(BaseAgent):
         # Note: Modules are initialized with the same tokenizer/device
         self.extractor = NaiveExtractor(tokenizer, device, **kwargs)
         self.updater = NaiveUpdater(tokenizer, device, **kwargs)
-        self.retriever = NaiveRetriever(tokenizer, device, **kwargs)
+        # self.retriever = NaiveRetriever(tokenizer, device, **kwargs)
         
         self.num_generations = kwargs.get("num_generations", 4)
         
+    def process_samples(self, prompts: List[str], responses: List[str], rewards: torch.Tensor, step_type: str) -> Samples:
+        # Tokenize and Pad logic adapted from MemoryAgent
+        prompts_ids = [self.tokenizer.encode(p, add_special_tokens=False) for p in prompts]
+        responses_ids = [self.tokenizer.encode(r, add_special_tokens=False) + [self.tokenizer.eos_token_id] for r in responses]
+        
+        # Pad Prompts (Left)
+        max_p_len = max(len(ids) for ids in prompts_ids)
+        padded_prompts = []
+        prompt_masks = []
+        for p_ids in prompts_ids:
+            pad_len = max_p_len - len(p_ids)
+            padded_prompts.append([self.tokenizer.pad_token_id] * pad_len + p_ids)
+            prompt_masks.append([0] * pad_len + [1] * len(p_ids))
+
+        # Pad Responses (Right)
+        max_r_len = max(len(ids) for ids in responses_ids)
+        padded_responses = []
+        response_masks = []
+        response_att_masks = []
+        for r_ids in responses_ids:
+            pad_len = max_r_len - len(r_ids)
+            padded_responses.append(r_ids + [self.tokenizer.pad_token_id] * pad_len)
+            response_masks.append([1] * len(r_ids) + [0] * pad_len)
+            response_att_masks.append([1] * len(r_ids) + [0] * pad_len)
+
+        # Concat
+        input_ids = torch.tensor([p + r for p, r in zip(padded_prompts, padded_responses)], device=self.device, dtype=torch.long)
+        attention_mask = torch.tensor([p + r for p, r in zip(prompt_masks, response_att_masks)], device=self.device, dtype=torch.long)
+        action_mask = torch.tensor(response_masks, device=self.device, dtype=torch.bool)
+        
+        # Process rewards/advantages
+        if rewards is not None:
+             # Calculate advantages
+             bs = len(prompts) // self.num_generations # Assuming structure
+             # rewards passed here are already [BS * NumGen]
+             # But if bs=0 or mismatch, handle gracefully
+             if bs > 0:
+                 reshaped_rewards = rewards.view(bs, self.num_generations)
+                 mean = reshaped_rewards.mean(dim=1, keepdim=True)
+                 std = reshaped_rewards.std(dim=1, keepdim=True)
+                 adv = (reshaped_rewards - mean) / (std + 1e-8)
+                 advantages_tensor = adv.flatten().to(self.device)
+             else:
+                 advantages_tensor = rewards.to(self.device)
+        else:
+            advantages_tensor = None
+
+        samples = Samples(
+            prompt_response_ids=input_ids,
+            attention_mask=attention_mask,
+            action_mask=action_mask,
+            num_actions=max_r_len,
+            rewards=advantages_tensor,
+            step_type=step_type,
+            response_length=action_mask.float().sum(dim=-1)
+        )
+        return samples
+
     def rollout(self, model: Any, batch_data: Dict[str, Any], **kwargs) -> Dict[str, Samples]:
         """
         Orchestrate the rollout process:
@@ -32,44 +90,24 @@ class MemoryR1Agent(BaseAgent):
         """
         # 1. Extraction
         facts = batch_data['fact']
-        ext_texts, ext_samples = self.extractor.generate(model, facts, self.num_generations)
+        ext_prompts, ext_texts = self.extractor.generate(model, facts, self.num_generations)
         
-        # 2. Update
-        context_memories = batch_data['context_memory']
-        # We need to adapt the arguments passed to updater.generate
-        upd_texts, upd_samples = self.updater.generate(model, context_memories, ext_texts)
-        
-        # 3. Reward Calculation
-        # We need the Environment's compute_reward function, passed via kwargs
+        # 2. Update & Reward Calculation (delegated to Updater)
         reward_fn = kwargs.get('reward_fn')
-        if not reward_fn:
-             # Fallback: Zero rewards
-             return None
-
-        # Call reward_fn from Environment
-        scores = reward_fn(
-            predictions={'extraction': ext_texts, 'update': upd_texts}, 
-            ground_truths=batch_data,
-            num_generations=self.num_generations
+        upd_prompts, upd_texts, scores = self.updater.rollout(
+            model, 
+            batch_data, 
+            ext_texts, 
+            reward_fn=reward_fn
         )
-        
-        # scores should be a dict: {'extraction': Tensor, 'update': Tensor}
-        ext_rewards = scores['extraction']
-        upd_rewards = scores['update']
-        
-        # Helper to compute advantages
-        def compute_advantages(rewards):
-            # rewards: [BS * NumGen]
-            # Reshape to [BS, NumGen]
-            bs = len(batch_data['fact'])
-            rewards = rewards.view(bs, self.num_generations)
-            mean = rewards.mean(dim=1, keepdim=True)
-            std = rewards.std(dim=1, keepdim=True)
-            adv = (rewards - mean) / (std + 1e-8)
-            return adv.flatten()
-
-        ext_samples.rewards = compute_advantages(ext_rewards)
-        upd_samples.rewards = compute_advantages(upd_rewards)
+        import ipdb; ipdb.set_trace()
+        if not scores or scores['extraction'] is None:
+            return None
+            
+        # 3. Process into Samples
+        # (tokenize, pad, compute_adv)
+        ext_samples = self.process_samples(ext_prompts, ext_texts, scores['extraction'], 'extraction')
+        upd_samples = self.process_samples(upd_prompts, upd_texts, scores['update'], 'update')
         
         return {
             "extraction": ext_samples,
