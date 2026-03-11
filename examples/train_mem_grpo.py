@@ -59,7 +59,7 @@ def main():
     if args.wandb_name:
         os.environ["SWANLAB_API_KEY"] = "Zkrggz0kWlnEuNRu5r4dz" # Keep the key from original file
         swanlab.init(
-            project="Debug",
+            project="MemFactory",
             config=vars(grpo_args),
             name=args.wandb_name
         )

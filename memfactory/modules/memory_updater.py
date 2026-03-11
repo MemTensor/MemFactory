@@ -59,6 +59,7 @@ Output:"""
 class NaiveUpdater(BaseModule):
     def __init__(self, tokenizer, device="cuda", **kwargs):
         super().__init__(tokenizer, device)
+        self.max_prompt_length = kwargs.get("max_prompt_length", 3072)
         self.max_generate_length = kwargs.get("max_generate_length", 2048)
         self.tokenizer.padding_side = "left"
         if self.tokenizer.pad_token is None:
@@ -127,50 +128,26 @@ class NaiveUpdater(BaseModule):
                 ground_truths=batch_data,
                 num_generations=num_generations
             )
+            # Log rewards if swanlab is available
+            try:
+                import swanlab
+                log_dict = {}
+                if scores.get('extraction') is not None:
+                    ext_r = scores['extraction'].float()
+                    log_dict["train/reward_extraction_mean"] = ext_r.mean().item()
+                    log_dict["train/reward_extraction_std"] = ext_r.std().item()
+                if scores.get('update') is not None:
+                    upd_r = scores['update'].float()
+                    log_dict["train/reward_update_mean"] = upd_r.mean().item()
+                    log_dict["train/reward_update_std"] = upd_r.std().item()
+                if log_dict:
+                    swanlab.log(log_dict)
+            except ImportError:
+                pass
         else:
             scores = {'extraction': None, 'update': None}
             
         return formatted_prompts, generated_texts, scores
-
-    def generate(self, model, context_memories: List[List[Any]], extraction_outputs: List[str]) -> Tuple[List[str], Samples]:
-        # Simplified version of mem_utils.prepare_memory_lists logic for prompt construction
-        # We assume context_memory is list of dicts (or MemoryItems)
-        # We parse extraction_output (JSON string)
-        
-        ctx_list = []
-        id_counter = 1
-        for mem in context_memory:
-            # mem could be dict or MemoryItem object. Handle both.
-            key = mem.get('key') if isinstance(mem, dict) else mem.key
-            val = mem.get('value') if isinstance(mem, dict) else mem.value
-            ctx_list.append({"id": id_counter, "key": key, "value": val})
-            id_counter += 1
-            
-        cand_list = []
-        try:
-            # Clean json string
-            json_str = extraction_output
-            if "```json" in json_str:
-                json_str = json_str.split("```json")[1].split("```")[0]
-            elif "```" in json_str:
-                json_str = json_str.split("```")[1].split("```")[0]
-            json_str = json_str.strip()
-            if json_str.startswith("<think>"):
-                 json_str = json_str.split("</think>")[-1].strip()
-            
-            ext_json = json.loads(json_str)
-            if "memory_list" in ext_json:
-                for item in ext_json["memory_list"]:
-                    cand_list.append({
-                        "id": id_counter,
-                        "key": item.get("key", "Unknown"),
-                        "value": item.get("value", "")
-                    })
-                    id_counter += 1
-        except:
-            pass # Invalid JSON, prompt will be empty/broken for candidates
-            
-        return ctx_list, cand_list
 
     def prepare_memory_lists(self, context_memory, extraction_output):
         """

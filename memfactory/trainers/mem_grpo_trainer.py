@@ -31,10 +31,12 @@ class MemGRPOArguments:
     env_type: str = "longcontext"
     max_chunk_number: int = 5
     num_generations: int = 4
+    max_prompt_length: int = 4096
     max_generate_length: int = 2048
     chunk_size: int = 2048
     
     # Training control
+    do_shuffle: bool = False
     train_extraction: bool = False
     train_update: bool = False
 
@@ -152,7 +154,7 @@ class MemGRPOTrainer:
         self.tokenizer.save_pretrained(path)
         
     def _prepare_train_inputs(self, samples):
-        inference_batch_size = 4
+        inference_batch_size = 2 # modified 0310 for MemAgent-Qwen3-4B-Instruct
         total_samples = samples.prompt_response_ids.size(0)
         
         all_old_log_probs = []
@@ -203,7 +205,7 @@ class MemGRPOTrainer:
             max_generate_length=self.args.max_generate_length
         )
 
-        dataloader = DataLoader(env, batch_size=self.args.batch_size, shuffle=False, collate_fn=env.collate_fn)
+        dataloader = DataLoader(env, batch_size=self.args.batch_size, shuffle=self.args.do_shuffle, collate_fn=env.collate_fn)
         
         # Define reward function wrapper
         # For MemoryBankEnv, it uses: predictions(Dict), ground_truths, num_generations
@@ -227,7 +229,19 @@ class MemGRPOTrainer:
                         samples_dict = samples_output
                     else:
                         continue
-                        
+                    
+                    # Log rewards to SwanLab
+                    log_dict = {}
+                    for step_type, samples in samples_dict.items():
+                        # Also log response length
+                        if samples.response_length is not None:
+                            mean_len = samples.response_length.float().mean().item()
+                            log_dict[f"train/response_length_{step_type}"] = mean_len
+
+                    if log_dict:
+                        log_dict["step"] = self.update_steps
+                        swanlab.log(log_dict)
+
                     # Inner Loop
                     for _ in range(self.args.num_iterations):
                         # Iterate over all types of samples returned by rollout

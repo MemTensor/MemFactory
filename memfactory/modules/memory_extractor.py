@@ -48,7 +48,7 @@ Your output:"""
 class NaiveExtractor(BaseModule):
     def __init__(self, tokenizer, device="cuda", **kwargs):
         super().__init__(tokenizer, device)
-        self.max_prompt_length = kwargs.get("max_prompt_length", 4096)
+        self.max_prompt_length = kwargs.get("max_prompt_length", 3072)
         self.max_generate_length = kwargs.get("max_generate_length", 2048)
         self.tokenizer.padding_side = "left"
         if self.tokenizer.pad_token is None:

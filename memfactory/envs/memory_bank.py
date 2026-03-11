@@ -186,7 +186,8 @@ class MemoryBankEnv(BaseEnv):
                                         self.store.save(new_mem)
                         else:
                             update_err = True
-
+                        if update_err:
+                            upd_reward = 0.0 # newly added
                         if not update_err:
                             # Retrieve
                             results = self.store.search_similar(query, top_k=30)
@@ -217,9 +218,9 @@ class MemoryBankEnv(BaseEnv):
                 final_ext = ext_reward
                 final_upd = upd_reward
                 
-                if accuracy_reward > 0:
-                    final_ext += accuracy_reward
-                    final_upd += accuracy_reward
+                # if accuracy_reward > 0:
+                #     final_ext += accuracy_reward
+                #     final_upd += accuracy_reward
                     
                 all_rewards_ext.append(final_ext)
                 all_rewards_upd.append(final_upd)

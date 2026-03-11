@@ -112,7 +112,16 @@ class RecurrentMemoryModule(BaseModule):
             
             if std_score.item() < 1e-6:
                 continue # Skip if no variance
-                
+            # Log rewards to SwanLab
+            try:
+                import swanlab
+                swanlab.log({
+                    "train/reward_default_mean": mean_score.item(),
+                    "train/reward_default_std": std_score.item()
+                })
+            except ImportError:
+                pass
+
             advantages = (scores_tensor - mean_score) / (std_score + 1e-8)
             
             for j in range(self.num_generations):

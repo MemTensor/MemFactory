@@ -100,7 +100,6 @@ class MemoryR1Agent(BaseAgent):
             ext_texts, 
             reward_fn=reward_fn
         )
-        import ipdb; ipdb.set_trace()
         if not scores or scores['extraction'] is None:
             return None
             
