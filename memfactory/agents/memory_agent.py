@@ -5,7 +5,7 @@ from .base import BaseAgent
 from ..modules.base import Samples
 from ..modules.memory_agent import RecurrentMemoryModule
 
-@AGENT_REGISTRY.register("naive")
+@AGENT_REGISTRY.register("memagent")
 class MemoryAgent(BaseAgent):
     """
     The 'Naive' Memory Agent implementation.

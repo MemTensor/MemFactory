@@ -6,16 +6,100 @@ import json
 from typing import List, Optional, Union, Any, Dict
 from concurrent.futures import ThreadPoolExecutor
 
-# Import LLMClient from src.common if available
+# =============================================================================
+# LLM 服务
+# =============================================================================
+from openai import OpenAI
 try:
-    # Attempt to import from project root structure
-    sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-    from src.common import LLMClient
+    from dotenv import load_dotenv
+    # 尝试从多个位置加载 .env
+    for env_path in ['.env', '../.env', '../../.env']:
+        if os.path.exists(env_path):
+            load_dotenv(env_path)
+            break
 except ImportError:
-    # Fallback or mock if src.common is not found (for standalone usage)
-    class LLMClient:
-        def chat(self, system, user):
-            return "True" # Mock for now
+    print("警告：无法加载环境变量，无法使用 OpenAI 等服务")
+    pass  
+
+# OpenAI LLM API 配置
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "")
+LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4.1-nano")
+class LLMClient:
+    """
+    LLM客户端：封装OpenAI API调用
+    """
+    
+    _instance = None
+    
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
+    
+    def __init__(self):
+        if self._initialized:
+            return
+        self.client = OpenAI(
+            api_key=OPENAI_API_KEY,
+            base_url=OPENAI_BASE_URL
+        )
+        self.model = LLM_MODEL
+        self._initialized = True
+        print(f"[LLMClient] 已初始化，模型: {self.model}")
+    
+    def chat(self, system_prompt: str, user_prompt: str, 
+             temperature: float = 0.3) -> str:
+        """
+        调用LLM进行对话
+        
+        Args:
+            system_prompt: 系统提示词
+            user_prompt: 用户输入
+            temperature: 温度参数
+            
+        Returns:
+            LLM响应文本
+        """
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=temperature
+            )
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            print(f"[LLMClient] API调用失败: {e}")
+            return ""
+    
+    def parse_json(self, response: str) -> Optional[Dict]:
+        """解析JSON响应"""
+        try:
+            # 尝试提取JSON块
+            if "```json" in response:
+                response = response.split("```json")[1].split("```")[0]
+            elif "```" in response:
+                response = response.split("```")[1].split("```")[0]
+            
+            # 清理空白字符
+            response = response.strip()
+            # 处理思维链
+            if response.startswith("<think>"):
+                response = response.split("</think>")[-1]
+                response = response.strip()
+            # 尝试提取JSON对象（处理可能存在的<think>标签或其他前缀）
+            if not response.startswith("{"):
+                print("[LLMClient-parse_json] 回答不是 { 开头无法解析", response[:100])
+
+            return json.loads(response)
+        except json.JSONDecodeError as e:
+            print(f"[LLMClient] JSON解析失败: {e}")
+            return None
+
 
 TEMPLATE = """You are presented with a problem, a section of an article that may contain the answer to the problem, and a previous memory. Please read the provided section carefully and update the memory with the new information that helps to answer the problem. Be sure to retain all relevant details from the previous memory while adding any new, useful information.
 
@@ -92,7 +176,7 @@ def evaluate_memory_agent(response, ground_truth, question="", llm_client=None):
         if boxed_content is None:
             return 0.0
             
-        llm = llm_client if llm_client else LLMClient()
+        assert llm_client is not None, "llm_client 不能为空"
         judge_prompt = JUDGE_PROMPT.format(
             question=question, 
             answer=ground_truth, 
@@ -116,8 +200,8 @@ def evaluate_memory_agent(response, ground_truth, question="", llm_client=None):
 
 def evaluate_memory_agent_batch(responses, ground_truths, questions, max_workers=16, llm_client=None):
     if llm_client is None:
-        llm_client = LLMClient()
-        
+        assert False, "llm_client (最好）不能为空"
+        # llm_client = LLMClient() optional
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = []
         for i in range(len(responses)):

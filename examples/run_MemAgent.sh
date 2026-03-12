@@ -15,7 +15,7 @@ OUTPUT_DIR="./output/mem_factory_qwen3_1.7b"
 # Select the Environment
 ENV_TYPE="longcontext" # Options: longcontext, memory_bank
 # Select the Agent Module
-AGENT_TYPE="naive"     # Options: naive
+AGENT_TYPE="memagent"
 # Select sub-modules (Not used for naive agent)
 EXTRACTOR_TYPE="none"
 UPDATER_TYPE="none"
