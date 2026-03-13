@@ -11,7 +11,7 @@ from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, field, asdict
 from enum import Enum
 import numpy as np
-
+from openai import OpenAI
 # OpenAI API 依赖
 from ..common.utils import LLMClient
 

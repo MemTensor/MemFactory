@@ -177,6 +177,7 @@ def evaluate_memory_agent(response, ground_truth, question="", llm_client=None):
             return 0.0
             
         assert llm_client is not None, "llm_client 不能为空"
+        llm = llm_client
         judge_prompt = JUDGE_PROMPT.format(
             question=question, 
             answer=ground_truth, 
