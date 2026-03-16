@@ -94,12 +94,13 @@ class MemoryRMMAgent(BaseAgent):
         3. Train Retriever (Rerank) with Extracted/Updated context.
         """
         # 1. Extraction (Inference)
-        bs = batch_data['fact'].shape[0]
+        bs = len(batch_data['fact'])
         ext_texts = self.extractor.inference(self.llm_client, batch_data, num_generations=1)
         assert len(ext_texts) == bs, "extraction texts must match batch size"
         # 2. Update (Inference)
         upd_texts = self.updater.inference(self.llm_client, batch_data, ext_texts, num_generations=1)
         assert len(upd_texts) == bs, "update texts must match batch size"
+        
         # 3. Retriever Rollout (Training)
         ret_prompts, ret_responses, scores = self.retriever.rollout(
             model, 
@@ -110,7 +111,6 @@ class MemoryRMMAgent(BaseAgent):
             reward_fn=kwargs.get('reward_fn'),
             num_generations=self.num_generations
         )
-        
         if not scores:
             return None
 

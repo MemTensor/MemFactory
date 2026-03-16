@@ -313,7 +313,6 @@ class RerankBankEnv(MemoryBankEnv):
                     "selected_ids": selected_ids,
                     "format_reward": format_reward
                 })
-        
         # Batch QA Inference
         if eval_tasks:
             qa_prompts = [t["qa_prompt"] for t in eval_tasks]

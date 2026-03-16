@@ -3,7 +3,8 @@ import json
 from typing import List, Dict, Any, Tuple
 from ..common.registry import MODULE_REGISTRY
 from .base import BaseModule
-from ..common.utils import parse_json_from_text, MemoryItem, generate_id
+from ..common.utils import parse_json_from_text
+from ..envs.memory_bank_utils import MemoryItem, generate_id
 
 RERANK_PROMPT = """You are an expert memory retriever.
 Your task is to select the most relevant memories to answer the user's query.
@@ -223,18 +224,26 @@ class RerankRetriever(BaseModule):
                 ground_truths=batch_data,
                 num_generations=num_generations
             )
+            # Filter out invalid entries before returning
+            valid_prompts = []
+            valid_generated_texts = []
+            valid_scores = []
             
+            has_scores = scores.get('rerank') is not None
+            
+            for i in range(len(full_prompts)):
+                if full_prompts[i] != "":
+                    valid_prompts.append(full_prompts[i])
+                    valid_generated_texts.append(full_generated_texts[i])
+                    if has_scores:
+                        valid_scores.append(scores['rerank'][i].item())
             # Log rewards if swanlab is available
             try:
                 import swanlab
                 log_dict = {}
-                if scores.get('rerank') is not None:
-                    # valid mask
-                    valid_mask = (torch.tensor(full_prompts) != "")
-                    if valid_mask.any():
-                        valid_rewards = scores['rerank'][valid_mask]
-                        log_dict["train/reward_rerank_mean"] = valid_rewards.mean().item()
-                        log_dict["train/reward_rerank_std"] = valid_rewards.std().item()
+                if scores.get('rerank') is not None:                    
+                    log_dict["train/reward_rerank_mean"] = torch.tensor(valid_scores).mean().item()
+                    log_dict["train/reward_rerank_std"] = torch.tensor(valid_scores).std().item()
                 if log_dict:
                     swanlab.log(log_dict)
             except ImportError:
@@ -242,19 +251,7 @@ class RerankRetriever(BaseModule):
         else:
             scores = {'rerank': None}
             
-        # Filter out invalid entries before returning
-        valid_prompts = []
-        valid_generated_texts = []
-        valid_scores = []
         
-        has_scores = scores.get('rerank') is not None
-        
-        for i in range(len(full_prompts)):
-            if full_prompts[i] != "":
-                valid_prompts.append(full_prompts[i])
-                valid_generated_texts.append(full_generated_texts[i])
-                if has_scores:
-                    valid_scores.append(scores['rerank'][i].item())
                     
         if has_scores:
             scores['rerank'] = torch.tensor(valid_scores, dtype=torch.float32, device=self.device)
