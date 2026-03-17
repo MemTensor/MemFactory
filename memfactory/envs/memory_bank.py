@@ -211,13 +211,9 @@ class MemoryBankEnv(BaseEnv):
                         pass
                 
                 # Combine Rewards
-                # We add accuracy to both? Or just update?
-                # Reference code logic implies separate rewards.
-                # Let's add accuracy to both if formats are valid.
-                
                 final_ext = ext_reward
                 final_upd = upd_reward
-                
+                # NOTE: Currently, this reward primarily reflects JSON format compliance rather than downstream reasoning accuracy.
                 # if accuracy_reward > 0:
                 #     final_ext += accuracy_reward
                 #     final_upd += accuracy_reward
