@@ -80,9 +80,8 @@ def main():
     models = [
         "/home/models/Qwen3-1.7B",
         "/home/models/Qwen3-4B-Instruct",
-        "/home/guozl/project/MemRL/Memory-CookBook/output/mem_factory_qwen3_1.7B/checkpoint_250",
-        "/home/guozl/project/MemRL/Memory-CookBook/output/mem_factory_qwen3_1.7B-noshuffle/checkpoint_250",
-        "/home/guozl/project/MemRL/Memory-CookBook/output/mem_factory_qwen3_4bI_noshuffle/checkpoint_250"
+        "/home/guozl/project/MemRL/Memory-CookBook/output/MemoryAgent1.7B/checkpoint_250",
+        "/home/guozl/project/MemRL/Memory-CookBook/output/MemoryAgent4B/checkpoint_250",
     ]
 
     # Datasets to evaluate

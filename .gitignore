@@ -16,7 +16,7 @@ tmp/
 **/tmp_data/
 
 # evaluation data
-*/eval_results/*
+*/*eval_results*/*
 *.csv
 *.jsonl
 **settings.json**
