@@ -1,5 +1,9 @@
 # MemFactory - 记忆处理与强化学习框架
 
+中文 | [English](README.en.md)
+
+论文：[xxxx](https://example.com/memfactory-paper)
+
 ## 项目简介
 
 MemFactory是一个模块化的记忆处理框架，集成了完整的记忆生命周期管理功能，同时内置强化学习训练支持。该框架提供了记忆抽取、更新决策、存储管理、组织构建、检索回答等核心模块，并支持通过强化学习优化记忆处理能力。
@@ -77,6 +81,28 @@ cp .env.example .env
 （2）仿造工作 MemoryAgent，对智能体的长上下文处理能力进行优化。
 
 （3）仿造工作 RMM ，对智能体的记忆检索策略进行优化。
+
+#### 实验：MemoryAgent
+
+我们重点选择 `MemoryAgent` 作为实验对象。原始 `MemAgent` 工作公开了较为完整的训练与评测数据，适合作为统一、可复现的实验基准。
+
+`examples/RunMemoryAgent1.7B.sh` 和 `examples/RunMemoryAgent4B.sh` 是论文中基于 `MemAgent` 开源数据训练 `MemoryAgent` 的脚本。用户可以直接使用同样的脚本复现论文结果：
+
+```bash
+bash examples/RunMemoryAgent1.7B.sh
+bash examples/RunMemoryAgent4B.sh
+```
+
+训练数据可从 [xxxx](https://example.com/memagent-data) 获取。下载后，请将脚本中的 `DATA_PATH` 和 `MODEL_PATH` 修改为本地环境对应的路径。训练完成后，可使用 `evaluation/evaluate_orchestrator.py` 在论文中的三个测试集上完成评测。
+
+**论文结果（avg@4，4 次独立试验平均）：**
+
+| Model | Setting | eval_50 | eval_100 | eval_fwe_16384 | Average |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Qwen3-1.7B | Base checkpoint | 0.4727 | 0.4297 | **0.0332** | 0.3118 |
+| Qwen3-1.7B | + MemFactory RL | **0.5684** | **0.4863** | 0.0195 | **0.3581** |
+| Qwen3-4B-Instruct | Base checkpoint | 0.6523 | 0.5645 | 0.6270 | 0.6146 |
+| Qwen3-4B-Instruct | + MemFactory RL | **0.7051** | **0.6309** | **0.6426** | **0.6595** |
 
 ### 3. 二次创新
 见“🛠️ 开发指南”
