@@ -6,9 +6,9 @@ set -x
 # ----------------------------------------------------------------------------
 
 # 1. Paths
-DATA_PATH="/home/guozl/project/guozl_project/MemAgentDatas/converted_hotpotqa_2000.json" 
+DATA_PATH="./datas/converted_hotpotqa_2000.json"
 MODEL_NAME="Qwen3-4B-Instruct"
-MODEL_PATH="/home/models/${MODEL_NAME}"
+MODEL_PATH="./models/${MODEL_NAME}"
 OUTPUT_DIR="./output/MemoryAgent4B"
 
 # 2. Environment & Agent Configuration

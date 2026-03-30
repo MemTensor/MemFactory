@@ -715,7 +715,7 @@ class MemoryStore:
             
             if neo4j_success and milvus_success:
                 if not self.use_mock:
-                    # revised by guozl: 训练期间不打印保存成功，避免干扰训练日志
+                    # 训练期间不打印保存成功，避免干扰训练日志
                     print(f"[MemoryStore] 保存成功: {memory.id} - {memory.key} (user: {memory.user_id})")
                 return True
             else:

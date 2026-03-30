@@ -22,7 +22,7 @@ def shorten_dataset_name(dataset_path):
     return os.path.basename(dataset_path).replace('.json', '')
 
 def main():
-    results_dir = '/home/guozl/project/MemRL/Memory-CookBook/evaluation/eval_results'
+    results_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'eval_results')
     output_md = os.path.join(results_dir, 'summary.md')
     output_csv = os.path.join(results_dir, 'summary.csv')
     

@@ -6,6 +6,11 @@ import json
 from multiprocessing import Process
 from typing import List, Dict
 
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+def repo_path(*parts: str) -> str:
+    return os.path.join(PROJECT_ROOT, *parts)
+
 def is_task_completed(task: Dict[str, str]) -> bool:
     """Check if the task has already been successfully completed."""
     out_file = task['out_file']
@@ -78,18 +83,18 @@ def main():
 
     # Models to evaluate (Base model + 3 Checkpoints)
     models = [
-        "/home/models/Qwen3-1.7B",
-        "/home/models/Qwen3-4B-Instruct",
-        "/home/guozl/project/MemRL/Memory-CookBook/output/MemoryAgent1.7B/checkpoint_250",
-        "/home/guozl/project/MemRL/Memory-CookBook/output/MemoryAgent4B/checkpoint_250",
+        repo_path("models", "Qwen3-1.7B"),
+        repo_path("models", "Qwen3-4B-Instruct"),
+        repo_path("output", "MemoryAgent1.7B", "checkpoint_250"),
+        repo_path("output", "MemoryAgent4B", "checkpoint_250"),
     ]
 
     # Datasets to evaluate
     datasets = [
-        "/home/guozl/project/guozl_project/MemAgentDatas/eval_50.json",
-        "/home/guozl/project/guozl_project/MemAgentDatas/eval_100.json",
-        "/home/guozl/project/guozl_project/MemAgentDatas/eval_fwe_16384.json",
-        # "/home/guozl/project/guozl_project/MemAgentDatas/eval_fwe_32768.json"
+        repo_path("datas", "eval_50.json"),
+        repo_path("datas", "eval_100.json"),
+        repo_path("datas", "eval_fwe_16384.json"),
+        # repo_path("datas", "eval_fwe_32768.json")
     ]
 
     output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "eval_results")

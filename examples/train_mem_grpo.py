@@ -57,7 +57,11 @@ def main():
     
     # Init SwanLab
     if args.wandb_name:
-        os.environ["SWANLAB_API_KEY"] = "Zkrggz0kWlnEuNRu5r4dz" # Keep the key from original file
+        swanlab_api_key = os.getenv("SWANLAB_API_KEY", "YOUR_SWANLAB_API_KEY")
+        if swanlab_api_key != "YOUR_SWANLAB_API_KEY":
+            os.environ["SWANLAB_API_KEY"] = swanlab_api_key
+        else:
+            print("Warning: SWANLAB_API_KEY is still using the placeholder value.")
         swanlab.init(
             project="MemFactory",
             config=vars(grpo_args),
