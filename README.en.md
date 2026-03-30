@@ -91,7 +91,7 @@ bash examples/RunMemoryAgent1.7B.sh
 bash examples/RunMemoryAgent4B.sh
 ```
 
-The training data can be downloaded from [xxxx](https://example.com/memagent-data). After downloading, update `DATA_PATH` and `MODEL_PATH` in the scripts to match your local environment. Once training is finished, you can use `evaluation/evaluate_orchestrator.py` to evaluate checkpoints on the three benchmark test sets used in the paper.
+The training data can be downloaded from [datas](https://huggingface.co/datasets/nworats/MemFactory). After downloading, update `DATA_PATH` and `MODEL_PATH` in the scripts to match your local environment. Once training is finished, you can use `evaluation/evaluate_orchestrator.py` to evaluate checkpoints on the three benchmark test sets used in the paper.
 
 **Reported results in the paper** (avg@4, averaged over 4 independent runs):
 

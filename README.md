@@ -93,7 +93,7 @@ bash examples/RunMemoryAgent1.7B.sh
 bash examples/RunMemoryAgent4B.sh
 ```
 
-训练数据可从 [xxxx](https://example.com/memagent-data) 获取。下载后，请将脚本中的 `DATA_PATH` 和 `MODEL_PATH` 修改为本地环境对应的路径。训练完成后，可使用 `evaluation/evaluate_orchestrator.py` 在论文中的三个测试集上完成评测。
+训练数据可从 [datas](https://huggingface.co/datasets/nworats/MemFactory) 获取。下载后，请将脚本中的 `DATA_PATH` 和 `MODEL_PATH` 修改为本地环境对应的路径。训练完成后，可使用 `evaluation/evaluate_orchestrator.py` 在论文中的三个测试集上完成评测。
 
 **论文结果（avg@4，4 次独立试验平均）：**
 
