@@ -227,4 +227,7 @@ outputs
 
 evaluation/data/temporal_locomo
 
-!MemFactory.pdf
+# Keep released assets and dependency manifests
+!assets/MemFactory.pdf
+!requirements.txt
+!requirements-full.txt

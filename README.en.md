@@ -2,7 +2,7 @@
 
 [中文](README.md) | English
 
-Paper: [arxiv](https://arxiv.org/abs/2603.29493)
+Paper: [arxiv](https://arxiv.org/abs/2603.29493) | [PDF](assets/MemFactory.pdf)
 
 ## Overview
 
@@ -12,7 +12,7 @@ MemFactory is a modular framework for memory processing that integrates full mem
 
 ### Core Components
 
-![logo](https://github.com/Valsure/MemFactory/blob/main/overall.png)
+![logo](assets/overall.png)
 
 ## 🔧 Key Features
 
@@ -114,6 +114,9 @@ See "🛠️ Developer Guide"
 OPENAI_API_KEY=your-openai-key
 OPENAI_BASE_URL=https://api.openai.com/v1
 LLM_MODEL=gpt-4.1-nano
+
+# SwanLab configuration (optional)
+SWANLAB_API_KEY=your-swanlab-key
 
 # Embedding service configuration
 EMBEDDING_API_KEY=your-embedding-key
