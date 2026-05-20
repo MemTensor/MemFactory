@@ -202,6 +202,7 @@ class MemGRPOTrainer:
             chunk_size=self.args.chunk_size, 
             max_chunk_number=self.args.max_chunk_number,
             num_generations=self.args.num_generations,
+            max_prompt_length=self.args.max_prompt_length,
             max_generate_length=self.args.max_generate_length
         )
 
