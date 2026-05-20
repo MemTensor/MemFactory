@@ -15,18 +15,12 @@ import memfactory.agents # Register agents
 
 def main():
     parser = HfArgumentParser((MemGRPOArguments,))
-    # Also parse standard args for model/data path if not in dataclass
-    # But for simplicity, let's assume we pass them via CLI and map them manually or add them to dataclass.
-    # The MemGRPOArguments I defined earlier didn't have model_path/data_path fields (oops, I should have added them or use a separate dataclass).
-    # Let's check MemGRPOArguments definition in trainers/mem_grpo_trainer.py
-    # It has output_dir, device, etc. but NOT model_name_or_path or data_path.
-    # I should add a separate dataclass for Model/Data args or just use argparse for them.
-    
-    # Let's use argparse for the main script wrapper, and then populate MemGRPOArguments.
     cli_parser = argparse.ArgumentParser()
     cli_parser.add_argument("--model_name_or_path", type=str, required=True, help="Path to the model")
     cli_parser.add_argument("--data_path", type=str, required=True, help="Path to the training data")
     cli_parser.add_argument("--wandb_name", type=str, default=None, help="SwanLab experiment name")
+    cli_parser.add_argument("--swanlab_project", type=str, default="MemFactory", help="SwanLab project name")
+    cli_parser.add_argument("--disable_swanlab", action="store_true", help="Disable SwanLab even if wandb_name is set")
     
     # We parse known args for CLI, and the rest for MemGRPOArguments
     args, remaining_args = cli_parser.parse_known_args()
@@ -36,37 +30,71 @@ def main():
     
     print(f"Loading model from {args.model_name_or_path}...")
     tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, trust_remote_code=True)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    if torch.cuda.is_available():
+        dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+    else:
+        dtype = torch.float32
     
     model_kwargs = {
-        "torch_dtype": torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16,
-        "device_map": "auto",
+        "torch_dtype": dtype,
         "trust_remote_code": True
     }
-    
+
     try:
-        import flash_attn
+        import accelerate
+        model_kwargs["low_cpu_mem_usage"] = True
+    except ImportError:
+        pass
+    
+    use_flash_attention = False
+    if torch.cuda.is_available():
+        try:
+            import flash_attn
+            use_flash_attention = True
+        except ImportError:
+            pass
+
+    if use_flash_attention:
         model_kwargs["attn_implementation"] = "flash_attention_2"
         print("Using Flash Attention 2")
-    except ImportError:
+    else:
         print("Flash Attention 2 not found, using default attention")
         
-    model = AutoModelForCausalLM.from_pretrained(
-        args.model_name_or_path, 
-        **model_kwargs
-    )
+    try:
+        model = AutoModelForCausalLM.from_pretrained(
+            args.model_name_or_path,
+            **model_kwargs
+        )
+    except Exception as exc:
+        if model_kwargs.get("attn_implementation") == "flash_attention_2":
+            print(f"Flash Attention 2 load failed ({exc}); retrying with default attention")
+            model_kwargs.pop("attn_implementation", None)
+            model = AutoModelForCausalLM.from_pretrained(
+                args.model_name_or_path,
+                **model_kwargs
+            )
+        else:
+            raise
     
     # Init SwanLab
-    if args.wandb_name:
-        swanlab_api_key = os.getenv("SWANLAB_API_KEY", "YOUR_SWANLAB_API_KEY")
-        if swanlab_api_key != "YOUR_SWANLAB_API_KEY":
-            os.environ["SWANLAB_API_KEY"] = swanlab_api_key
+    grpo_args.report_to_swanlab = False
+    if args.wandb_name and not args.disable_swanlab:
+        swanlab_api_key = os.getenv("SWANLAB_API_KEY")
+        if not swanlab_api_key:
+            print("SWANLAB_API_KEY is not set; SwanLab logging is disabled for this run.")
         else:
-            print("Warning: SWANLAB_API_KEY is still using the placeholder value.")
-        swanlab.init(
-            project="MemFactory",
-            config=vars(grpo_args),
-            name=args.wandb_name
-        )
+            try:
+                swanlab.init(
+                    project=args.swanlab_project,
+                    config={**vars(grpo_args), "model_name_or_path": args.model_name_or_path, "data_path": args.data_path},
+                    name=args.wandb_name
+                )
+                grpo_args.report_to_swanlab = True
+            except Exception as exc:
+                print(f"SwanLab init failed ({exc}); continuing without SwanLab logging.")
     
     print("Initializing Trainer...")
     trainer = MemGRPOTrainer(

@@ -11,6 +11,7 @@ parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 from memfactory.common.utils import TEMPLATE, TEMPLATE_FINAL_BOXED, evaluate_memory_agent, LLMClient
+from memfactory.common.utils import build_no_memory_qa_prompt
 
 def process_dataset(dataset_path):
     with open(dataset_path, 'r', encoding='utf-8') as f:
@@ -47,8 +48,15 @@ def main():
     parser.add_argument("--model_path", type=str, required=True, help="Path to the model or base model name")
     parser.add_argument("--dataset_path", type=str, required=True, help="Path to the dataset json file")
     parser.add_argument("--output_file", type=str, required=True, help="Path to save the evaluation results")
+    parser.add_argument("--agent_type", type=str, default="memagent", choices=["memagent", "no_memory"], help="Evaluation policy")
     parser.add_argument("--chunk_size", type=int, default=2500, help="Token length for context chunking")
     parser.add_argument("--n_paths", type=int, default=4, help="Number of reasoning paths (N=4)")
+    parser.add_argument("--max_prompt_length", type=int, default=8192, help="Prompt length budget for direct no-memory evaluation")
+    parser.add_argument("--max_tokens", type=int, default=2048, help="Maximum generated tokens per model call")
+    parser.add_argument("--temperature", type=float, default=1.0, help="Sampling temperature")
+    parser.add_argument("--context_truncation_side", type=str, default="head", choices=["head", "tail", "middle"], help="How to truncate direct no-memory context")
+    parser.add_argument("--vllm_max_model_len", type=int, default=32768, help="vLLM max_model_len to avoid over-reserving KV cache")
+    parser.add_argument("--gpu_memory_utilization", type=float, default=0.9, help="vLLM GPU memory utilization")
     args = parser.parse_args()
 
     print(f"Loading dataset: {args.dataset_path}")
@@ -56,21 +64,27 @@ def main():
     
     print(f"Loading model: {args.model_path}")
     # Initialize vLLM (tensor_parallel_size=1, since we allocate 1 GPU per task)
-    llm = LLM(model=args.model_path, tensor_parallel_size=1, trust_remote_code=True)
+    llm = LLM(
+        model=args.model_path,
+        tensor_parallel_size=1,
+        trust_remote_code=True,
+        max_model_len=args.vllm_max_model_len,
+        gpu_memory_utilization=args.gpu_memory_utilization,
+    )
     tokenizer = AutoTokenizer.from_pretrained(args.model_path, trust_remote_code=True)
     
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
         
     stop_token_ids = [tokenizer.eos_token_id]
-    if tokenizer.pad_token_id and tokenizer.pad_token_id not in stop_token_ids:
+    if tokenizer.pad_token_id is not None and tokenizer.pad_token_id not in stop_token_ids:
         stop_token_ids.append(tokenizer.pad_token_id)
 
     # Initialize sampling params: n=1 because we provide a list of distinct prompts at each step
     sampling_params = SamplingParams(
         n=1,
-        temperature=1.0, # Temperature 1.0 for do_sample=True, same as training script
-        max_tokens=2048,
+        temperature=args.temperature,
+        max_tokens=args.max_tokens,
         stop_token_ids=stop_token_ids
     )
     
@@ -88,42 +102,58 @@ def main():
         context = sample['context']
         ground_truth = sample['ground_truth']
         
-        context_ids = tokenizer.encode(context)
-        total_length = len(context_ids)
-        num_chunks = (total_length + args.chunk_size - 1) // args.chunk_size
-        
-        # Initialize memories for N paths
-        memories = ["No previous memory"] * args.n_paths
-        
-        # Iterative Context Processing
-        for step in range(num_chunks):
-            start_idx = step * args.chunk_size
-            end_idx = min((step + 1) * args.chunk_size, total_length)
-            chunk_text = tokenizer.decode(context_ids[start_idx:end_idx], skip_special_tokens=True)
-            
-            prompts = [TEMPLATE.format(prompt=question, memory=memories[j], chunk=chunk_text) for j in range(args.n_paths)]
-            msgs_list = [[{"role": "user", "content": p}] for p in prompts]
-            formatted_prompts = [tokenizer.apply_chat_template(m, add_generation_prompt=True, tokenize=False) for m in msgs_list]
-            
-            outputs = llm.generate(formatted_prompts, sampling_params, use_tqdm=False)
-            
-            for j in range(args.n_paths):
-                response_text = outputs[j].outputs[0].text
-                memories[j] = response_text
-                # Extract memory thought process
-                if "<think>" in response_text:
-                    if "</think>" in response_text:
-                        memories[j] = response_text.split("</think>")[-1].strip()
-                    else:
-                        memories[j] = response_text[-100:].strip()
-                        
-        # Final Answer Generation
-        final_prompts = [TEMPLATE_FINAL_BOXED.format(prompt=question, memory=memories[j]) for j in range(args.n_paths)]
-        msgs_list = [[{"role": "user", "content": p}] for p in final_prompts]
-        formatted_final_prompts = [tokenizer.apply_chat_template(m, add_generation_prompt=True, tokenize=False) for m in msgs_list]
-        
-        final_outputs = llm.generate(formatted_final_prompts, sampling_params, use_tqdm=False)
-        final_responses = [out.outputs[0].text for out in final_outputs]
+        context_ids = tokenizer.encode(context, add_special_tokens=False)
+
+        if args.agent_type == "no_memory":
+            formatted_final_prompts = [
+                build_no_memory_qa_prompt(
+                    tokenizer=tokenizer,
+                    question=question,
+                    context_ids=context_ids,
+                    max_prompt_length=args.max_prompt_length,
+                    context_truncation_side=args.context_truncation_side,
+                    apply_chat_template=True,
+                )
+                for _ in range(args.n_paths)
+            ]
+            final_outputs = llm.generate(formatted_final_prompts, sampling_params, use_tqdm=False)
+            final_responses = [out.outputs[0].text for out in final_outputs]
+        else:
+            total_length = len(context_ids)
+            num_chunks = (total_length + args.chunk_size - 1) // args.chunk_size
+
+            # Initialize memories for N paths
+            memories = ["No previous memory"] * args.n_paths
+
+            # Iterative Context Processing
+            for step in range(num_chunks):
+                start_idx = step * args.chunk_size
+                end_idx = min((step + 1) * args.chunk_size, total_length)
+                chunk_text = tokenizer.decode(context_ids[start_idx:end_idx], skip_special_tokens=True)
+
+                prompts = [TEMPLATE.format(prompt=question, memory=memories[j], chunk=chunk_text) for j in range(args.n_paths)]
+                msgs_list = [[{"role": "user", "content": p}] for p in prompts]
+                formatted_prompts = [tokenizer.apply_chat_template(m, add_generation_prompt=True, tokenize=False) for m in msgs_list]
+
+                outputs = llm.generate(formatted_prompts, sampling_params, use_tqdm=False)
+
+                for j in range(args.n_paths):
+                    response_text = outputs[j].outputs[0].text
+                    memories[j] = response_text
+                    # Extract memory thought process
+                    if "<think>" in response_text:
+                        if "</think>" in response_text:
+                            memories[j] = response_text.split("</think>")[-1].strip()
+                        else:
+                            memories[j] = response_text[-100:].strip()
+
+            # Final Answer Generation
+            final_prompts = [TEMPLATE_FINAL_BOXED.format(prompt=question, memory=memories[j]) for j in range(args.n_paths)]
+            msgs_list = [[{"role": "user", "content": p}] for p in final_prompts]
+            formatted_final_prompts = [tokenizer.apply_chat_template(m, add_generation_prompt=True, tokenize=False) for m in msgs_list]
+
+            final_outputs = llm.generate(formatted_final_prompts, sampling_params, use_tqdm=False)
+            final_responses = [out.outputs[0].text for out in final_outputs]
         
         # Evaluation using LLM as a judge
         path_scores = []
@@ -146,6 +176,12 @@ def main():
         summary = {
             'model': args.model_path,
             'dataset': args.dataset_path,
+            'agent_type': args.agent_type,
+            'n_paths': args.n_paths,
+            'chunk_size': args.chunk_size,
+            'max_prompt_length': args.max_prompt_length,
+            'max_tokens': args.max_tokens,
+            'context_truncation_side': args.context_truncation_side,
             'current_accuracy': total_score / (i + 1),
             'processed': i + 1,
             'total': len(samples)

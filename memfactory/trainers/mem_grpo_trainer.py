@@ -24,6 +24,8 @@ class MemGRPOArguments:
     gradient_accumulation_steps: int = 1
     num_iterations: int = 1
     batch_size: int = 1
+    train_micro_batch_size: int = 1
+    logprob_batch_size: int = 1
     gradient_checkpointing: bool = True
     
     # MemFactory specific
@@ -31,9 +33,12 @@ class MemGRPOArguments:
     env_type: str = "longcontext"
     max_chunk_number: int = 5
     num_generations: int = 4
+    generation_batch_size: int = 1
     max_prompt_length: int = 4096
     max_generate_length: int = 2048
+    context_truncation_side: str = "head"
     chunk_size: int = 2048
+    report_to_swanlab: bool = False
     
     # Training control
     do_shuffle: bool = False
@@ -44,22 +49,43 @@ class MemGRPOArguments:
 class MemGRPOTrainer:
     def __init__(self, model, args: MemGRPOArguments, tokenizer, ref_model=None):
         self.args = args
-        self.model = model.to(self.args.device)
+        if getattr(model, "hf_device_map", None):
+            self.model = model
+        else:
+            self.model = model.to(self.args.device)
         self.tokenizer = tokenizer
+        self._swanlab_failed = False
         
         if self.args.gradient_checkpointing:
-            self.model.gradient_checkpointing_enable()
+            if hasattr(self.model, "config"):
+                self.model.config.use_cache = False
+            try:
+                self.model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+            except TypeError:
+                self.model.gradient_checkpointing_enable()
             
         self.ref_model = ref_model
         if self.ref_model is None and self.args.beta != 0.0:
             self.ref_model = deepcopy(model)
             self.ref_model.eval()
+            self.ref_model.requires_grad_(False)
             
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.args.lr)
+        trainable_params = [p for p in self.model.parameters() if p.requires_grad]
+        self.optimizer = torch.optim.Adam(trainable_params, lr=self.args.lr)
+        self.optimizer.zero_grad(set_to_none=True)
         self.scaler = torch.amp.GradScaler() if (self.args.device == 'cuda' and self.model.dtype != torch.bfloat16) else None
         
         self.update_steps = 0
         self.llm_client = LLMClient() # For reward computation
+
+    def _log(self, log_dict: Dict[str, Any]):
+        if not self.args.report_to_swanlab or self._swanlab_failed:
+            return
+        try:
+            swanlab.log(log_dict)
+        except Exception as exc:
+            self._swanlab_failed = True
+            print(f"[SwanLab] Logging disabled after failure: {exc}")
 
     def get_action_log_probs(self, model, input_ids, attention_mask, num_actions):
         output = model(input_ids, attention_mask=attention_mask, use_cache=False)
@@ -110,7 +136,7 @@ class MemGRPOTrainer:
 
     def train_step(self, inputs, step):
         self.model.train()
-        training_batch_size = 4
+        training_batch_size = max(1, self.args.train_micro_batch_size)
         total_samples = inputs['prompt_response_ids'].size(0)
         total_loss = 0.0
         
@@ -118,15 +144,18 @@ class MemGRPOTrainer:
             end_i = min(i + training_batch_size, total_samples)
             mini_inputs = {k: v[i:end_i] if v is not None else None for k, v in inputs.items()}
             
-            loss = self.compute_loss(self.model, mini_inputs)
+            if self.scaler:
+                with torch.amp.autocast(device_type='cuda'):
+                    loss = self.compute_loss(self.model, mini_inputs)
+            else:
+                loss = self.compute_loss(self.model, mini_inputs)
             
             mini_batch_size = end_i - i
             scale_factor = mini_batch_size / total_samples
             scaled_loss = loss * scale_factor
             
             if self.scaler:
-                 with torch.amp.autocast(device_type='cuda'):
-                     self.scaler.scale(scaled_loss / self.args.gradient_accumulation_steps).backward()
+                 self.scaler.scale(scaled_loss / self.args.gradient_accumulation_steps).backward()
             else:
                  (scaled_loss / self.args.gradient_accumulation_steps).backward()
             
@@ -141,9 +170,9 @@ class MemGRPOTrainer:
             else:
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
                 self.optimizer.step()
-            self.optimizer.zero_grad()
+            self.optimizer.zero_grad(set_to_none=True)
 
-            swanlab.log({"train/loss": total_loss, "step": self.update_steps})
+            self._log({"train/loss": total_loss, "step": self.update_steps})
             if self.update_steps % 10 == 0:
                 print(f"Step {self.update_steps}: Loss {total_loss:.4f}")
 
@@ -154,7 +183,7 @@ class MemGRPOTrainer:
         self.tokenizer.save_pretrained(path)
         
     def _prepare_train_inputs(self, samples):
-        inference_batch_size = 2 # modified 0310 for MemAgent-Qwen3-4B-Instruct
+        inference_batch_size = max(1, self.args.logprob_batch_size)
         total_samples = samples.prompt_response_ids.size(0)
         
         all_old_log_probs = []
@@ -202,8 +231,11 @@ class MemGRPOTrainer:
             chunk_size=self.args.chunk_size, 
             max_chunk_number=self.args.max_chunk_number,
             num_generations=self.args.num_generations,
+            generation_batch_size=self.args.generation_batch_size,
             max_prompt_length=self.args.max_prompt_length,
-            max_generate_length=self.args.max_generate_length
+            max_generate_length=self.args.max_generate_length,
+            context_truncation_side=self.args.context_truncation_side,
+            report_to_swanlab=self.args.report_to_swanlab
         )
 
         dataloader = DataLoader(env, batch_size=self.args.batch_size, shuffle=self.args.do_shuffle, collate_fn=env.collate_fn)
@@ -241,7 +273,7 @@ class MemGRPOTrainer:
 
                     if log_dict:
                         log_dict["step"] = self.update_steps
-                        swanlab.log(log_dict)
+                        self._log(log_dict)
 
                     # Inner Loop
                     for _ in range(self.args.num_iterations):
@@ -262,4 +294,5 @@ class MemGRPOTrainer:
                     if self.update_steps % self.args.save_steps == 0:
                         self.save_model(f"checkpoint_{self.update_steps}")
                 
-                torch.cuda.empty_cache()
+                if self.args.device == 'cuda':
+                    torch.cuda.empty_cache()

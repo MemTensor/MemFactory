@@ -131,6 +131,86 @@ TEMPLATE_FINAL_BOXED = """You are presented with a problem and a previous memory
 Your answer:
 """
 
+NO_MEMORY_QA_TEMPLATE = """You are presented with a problem and a context that may contain the answer.
+Answer the problem based on the context and put the answer in \\boxed{{}}.
+
+<problem>
+{prompt}
+</problem>
+
+<context>
+{context}
+</context>
+
+Your answer:
+"""
+
+def truncate_context_ids(context_ids: List[int], max_tokens: int, truncation_side: str = "head") -> List[int]:
+    if max_tokens <= 0:
+        return []
+    if len(context_ids) <= max_tokens:
+        return list(context_ids)
+    if truncation_side == "head":
+        return list(context_ids[:max_tokens])
+    if truncation_side == "tail":
+        return list(context_ids[-max_tokens:])
+    if truncation_side == "middle":
+        head_tokens = max_tokens // 2
+        tail_tokens = max_tokens - head_tokens
+        return list(context_ids[:head_tokens] + context_ids[-tail_tokens:])
+    raise ValueError(f"Unsupported context_truncation_side: {truncation_side}")
+
+def build_no_memory_qa_prompt(
+    tokenizer,
+    question: str,
+    context_ids: List[int],
+    max_prompt_length: Optional[int] = None,
+    context_truncation_side: str = "head",
+    apply_chat_template: bool = True,
+) -> str:
+    """
+    Build the direct no-memory QA prompt while preserving the answer instruction.
+    The context is truncated before template rendering so tokenizer truncation does
+    not accidentally remove the tail of the prompt.
+    """
+    context_ids = list(context_ids or [])
+    context_budget = len(context_ids)
+
+    if max_prompt_length is not None and max_prompt_length > 0:
+        empty_prompt = NO_MEMORY_QA_TEMPLATE.format(prompt=question, context="")
+        if apply_chat_template:
+            empty_prompt = tokenizer.apply_chat_template(
+                [{"role": "user", "content": empty_prompt}],
+                add_generation_prompt=True,
+                tokenize=False,
+            )
+        overhead = len(tokenizer.encode(empty_prompt, add_special_tokens=False))
+        context_budget = max(0, max_prompt_length - overhead - 8)
+
+    truncated_context_ids = truncate_context_ids(context_ids, context_budget, context_truncation_side)
+
+    for _ in range(4):
+        context_text = tokenizer.decode(truncated_context_ids, skip_special_tokens=True)
+        prompt = NO_MEMORY_QA_TEMPLATE.format(prompt=question, context=context_text)
+        if apply_chat_template:
+            prompt = tokenizer.apply_chat_template(
+                [{"role": "user", "content": prompt}],
+                add_generation_prompt=True,
+                tokenize=False,
+            )
+        if max_prompt_length is None or max_prompt_length <= 0:
+            return prompt
+
+        prompt_len = len(tokenizer.encode(prompt, add_special_tokens=False))
+        if prompt_len <= max_prompt_length or context_budget <= 0:
+            return prompt
+
+        overflow = prompt_len - max_prompt_length
+        context_budget = max(0, context_budget - overflow - 8)
+        truncated_context_ids = truncate_context_ids(context_ids, context_budget, context_truncation_side)
+
+    return prompt
+
 JUDGE_PROMPT = """Please judge whether the predicted answer is correct based on the standard answer.
 
 Question: {question}

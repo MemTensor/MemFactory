@@ -42,9 +42,10 @@ def main():
                 
                 model_raw = summary.get('model', 'unknown')
                 dataset_raw = summary.get('dataset', 'unknown')
+                agent_type = summary.get('agent_type', 'memagent')
                 accuracy = summary.get('current_accuracy', 0.0)
                 
-                model_short = shorten_model_name(model_raw)
+                model_short = f"{agent_type}_{shorten_model_name(model_raw)}"
                 dataset_short = shorten_dataset_name(dataset_raw)
                 
                 data.append({
