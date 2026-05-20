@@ -18,6 +18,7 @@ class MemGRPOArguments:
     device: str = 'cuda' if torch.cuda.is_available() else 'cpu'
     lr: float = 5e-7
     save_steps: int = 500
+    max_steps: Optional[int] = None
     epoch: int = 1
     beta: float = 0.1
     clip_eps: float = 0.2
@@ -293,6 +294,9 @@ class MemGRPOTrainer:
                     self.update_steps += 1
                     if self.update_steps % self.args.save_steps == 0:
                         self.save_model(f"checkpoint_{self.update_steps}")
+                    if self.args.max_steps is not None and self.args.max_steps > 0 and self.update_steps >= self.args.max_steps:
+                        print(f"Reached max_steps={self.args.max_steps}; stopping training.")
+                        return
                 
                 if self.args.device == 'cuda':
                     torch.cuda.empty_cache()

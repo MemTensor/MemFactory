@@ -16,10 +16,11 @@ AGENT_TYPE="no_memory"
 LR="${LR:-5e-6}"
 BETA="${BETA:-0.001}"
 NUM_GENS="${NUM_GENS:-16}"
-MAX_PROMPT_LEN="${MAX_PROMPT_LEN:-5500}"
+MAX_PROMPT_LEN="${MAX_PROMPT_LEN:-15500}"
 MAX_GEN_LEN="${MAX_GEN_LEN:-1500}"
 GRAD_ACC_STEPS="${GRAD_ACC_STEPS:-24}"
 SAVE_STEPS="${SAVE_STEPS:-250}"
+MAX_STEPS="${MAX_STEPS:-250}"
 GENERATION_BATCH_SIZE="${GENERATION_BATCH_SIZE:-1}"
 TRAIN_MICRO_BATCH_SIZE="${TRAIN_MICRO_BATCH_SIZE:-1}"
 LOGPROB_BATCH_SIZE="${LOGPROB_BATCH_SIZE:-1}"
@@ -49,6 +50,7 @@ python3 examples/train_mem_grpo.py \
     --max_generate_length "$MAX_GEN_LEN" \
     --context_truncation_side "$CONTEXT_TRUNCATION_SIDE" \
     --save_steps "$SAVE_STEPS" \
+    --max_steps "$MAX_STEPS" \
     --env_type "$ENV_TYPE" \
     --agent_type "$AGENT_TYPE" \
     --wandb_name "memfactory_${AGENT_TYPE}_${ENV_TYPE}_${MODEL_NAME}" \
