@@ -140,7 +140,7 @@ class NoMemoryAgent(BaseAgent):
         reward_fn = kwargs.get("reward_fn")
         if not reward_fn:
             raise ValueError("reward_fn is required for rollout")
-
+        
         results = []
         bs = len(batch_data["context_ids"])
 
@@ -152,7 +152,6 @@ class NoMemoryAgent(BaseAgent):
             prompt = self._build_prompt(question, context_ids)
             formatted_prompts = [prompt] * self.num_generations
             generated_texts = self._generate_texts(model, formatted_prompts, do_sample=True)
-
             scores = reward_fn(
                 generated_texts,
                 [ground_truth] * self.num_generations,
@@ -162,8 +161,15 @@ class NoMemoryAgent(BaseAgent):
             mean_score = scores_tensor.mean()
             std_score = scores_tensor.std()
 
-            # 方差为0时不跳过，advantages设为全0——避免DDP下各rank同步问题，
-            # 且全0梯度不更新参数，语义上等价于跳过但不需要跨rank协调
+            try:
+                import swanlab
+                swanlab.log({
+                    "train/reward_default_mean": mean_score.item(),
+                    "train/reward_default_std": std_score.item(),
+                })
+            except Exception:
+                pass
+
             if std_score.item() < 1e-6:
                 advantages = torch.zeros_like(scores_tensor)
             else:

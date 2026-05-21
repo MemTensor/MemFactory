@@ -212,30 +212,28 @@ class MemGRPOTrainer:
         total_samples = inputs['prompt_response_ids'].size(0)
         total_loss = 0.0
         should_step_optimizer = (step + 1) % self.args.gradient_accumulation_steps == 0
-        sync_context = self.model.no_sync() if self.is_distributed and not should_step_optimizer else nullcontext()
-        
-        with sync_context:
-            for i in range(0, total_samples, training_batch_size):
-                end_i = min(i + training_batch_size, total_samples)
-                mini_inputs = {k: v[i:end_i] if v is not None else None for k, v in inputs.items()}
-                
-                if self.scaler:
-                    with torch.amp.autocast(device_type='cuda'):
-                        loss = self.compute_loss(self.model, mini_inputs)
-                else:
+
+        for i in range(0, total_samples, training_batch_size):
+            end_i = min(i + training_batch_size, total_samples)
+            mini_inputs = {k: v[i:end_i] if v is not None else None for k, v in inputs.items()}
+
+            if self.scaler:
+                with torch.amp.autocast(device_type='cuda'):
                     loss = self.compute_loss(self.model, mini_inputs)
-                
-                mini_batch_size = end_i - i
-                scale_factor = mini_batch_size / total_samples
-                scaled_loss = loss * scale_factor
-                
-                if self.scaler:
-                     self.scaler.scale(scaled_loss / self.args.gradient_accumulation_steps).backward()
-                else:
-                     (scaled_loss / self.args.gradient_accumulation_steps).backward()
-                
-                total_loss += scaled_loss.item()
-             
+            else:
+                loss = self.compute_loss(self.model, mini_inputs)
+
+            mini_batch_size = end_i - i
+            scale_factor = mini_batch_size / total_samples
+            scaled_loss = loss * scale_factor
+
+            if self.scaler:
+                self.scaler.scale(scaled_loss / self.args.gradient_accumulation_steps).backward()
+            else:
+                (scaled_loss / self.args.gradient_accumulation_steps).backward()
+
+            total_loss += scaled_loss.item()
+
         if should_step_optimizer:
             if self.scaler:
                 self.scaler.unscale_(self.optimizer)
@@ -375,12 +373,11 @@ class MemGRPOTrainer:
                     else:
                         continue
                     
-                    # 打印并记录 rewards 和 response length
                     log_dict = {}
                     for step_type, samples in samples_dict.items():
                         if samples.rewards is not None:
-                            mean_reward = samples.rewards.mean().item()
-                            log_dict[f"train/reward_{step_type}"] = mean_reward
+                            mean_adv = samples.rewards.mean().item()
+                            log_dict[f"train/advantage_{step_type}"] = mean_adv
                         if samples.response_length is not None:
                             mean_len = samples.response_length.float().mean().item()
                             log_dict[f"train/response_length_{step_type}"] = mean_len
