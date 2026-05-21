@@ -117,7 +117,7 @@ def run_tasks_on_gpu(gpu_id: str, tasks: List[Dict[str, Any]]):
 
 def main():
     parser = argparse.ArgumentParser(description="Multi-GPU Orchestrator for Evaluation")
-    parser.add_argument("--gpus", type=str, default="0,1,2,3,4,5,6,7", help="Comma-separated list of GPU IDs to use (e.g. '0,1,2,3')")
+    parser.add_argument("--gpus", type=str, default=None, help="Comma-separated GPU IDs to use. Defaults to CUDA_VISIBLE_DEVICES if set, otherwise 0,1,2,3,4,5,6,7.")
     parser.add_argument("--agent_type", type=str, default="memagent", choices=["memagent", "no_memory"], help="Evaluation policy")
     parser.add_argument("--models", type=str, default=None, help="Comma-separated model/checkpoint paths. Defaults depend on agent_type.")
     parser.add_argument("--datasets", type=str, default=None, help="Comma-separated dataset paths.")
@@ -131,7 +131,10 @@ def main():
     parser.add_argument("--gpu_memory_utilization", type=float, default=0.9)
     args = parser.parse_args()
 
-    gpus = [g.strip() for g in args.gpus.split(",") if g.strip()]
+    gpu_arg = args.gpus
+    if gpu_arg is None:
+        gpu_arg = os.environ.get("CUDA_VISIBLE_DEVICES") or "0,1,2,3,4,5,6,7"
+    gpus = [g.strip() for g in gpu_arg.split(",") if g.strip()]
     num_gpus = len(gpus)
 
     if args.models:

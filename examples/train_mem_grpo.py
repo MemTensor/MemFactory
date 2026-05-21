@@ -2,6 +2,7 @@ import argparse
 import os
 import sys
 import torch
+import torch.distributed as dist
 from transformers import AutoTokenizer, AutoModelForCausalLM, HfArgumentParser
 import swanlab
 
@@ -13,7 +14,28 @@ import memfactory.envs  # Register envs
 import memfactory.modules # Register modules
 import memfactory.agents # Register agents
 
+def setup_distributed():
+    world_size = int(os.environ.get("WORLD_SIZE", "1"))
+    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+    global_rank = int(os.environ.get("RANK", "0"))
+    distributed = world_size > 1
+
+    if distributed:
+        if not torch.cuda.is_available():
+            raise RuntimeError("torchrun DDP requires CUDA for this training script.")
+        torch.cuda.set_device(local_rank)
+        dist.init_process_group(backend="nccl")
+
+    return distributed, local_rank, global_rank, world_size
+
+def cleanup_distributed():
+    if dist.is_available() and dist.is_initialized():
+        dist.destroy_process_group()
+
 def main():
+    distributed, local_rank, global_rank, world_size = setup_distributed()
+    is_main_process = global_rank == 0
+
     parser = HfArgumentParser((MemGRPOArguments,))
     cli_parser = argparse.ArgumentParser()
     cli_parser.add_argument("--model_name_or_path", type=str, required=True, help="Path to the model")
@@ -27,8 +49,15 @@ def main():
     
     # Parse MemGRPOArguments from remaining_args
     grpo_args = parser.parse_args_into_dataclasses(args=remaining_args)[0]
+    grpo_args.distributed = distributed
+    grpo_args.local_rank = local_rank
+    grpo_args.global_rank = global_rank
+    grpo_args.world_size = world_size
+    if distributed:
+        grpo_args.device = f"cuda:{local_rank}"
     
-    print(f"Loading model from {args.model_name_or_path}...")
+    if is_main_process:
+        print(f"Loading model from {args.model_name_or_path}...")
     tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -59,9 +88,11 @@ def main():
 
     if use_flash_attention:
         model_kwargs["attn_implementation"] = "flash_attention_2"
-        print("Using Flash Attention 2")
+        if is_main_process:
+            print("Using Flash Attention 2")
     else:
-        print("Flash Attention 2 not found, using default attention")
+        if is_main_process:
+            print("Flash Attention 2 not found, using default attention")
         
     try:
         model = AutoModelForCausalLM.from_pretrained(
@@ -70,7 +101,8 @@ def main():
         )
     except Exception as exc:
         if model_kwargs.get("attn_implementation") == "flash_attention_2":
-            print(f"Flash Attention 2 load failed ({exc}); retrying with default attention")
+            if is_main_process:
+                print(f"Flash Attention 2 load failed ({exc}); retrying with default attention")
             model_kwargs.pop("attn_implementation", None)
             model = AutoModelForCausalLM.from_pretrained(
                 args.model_name_or_path,
@@ -81,7 +113,7 @@ def main():
     
     # Init SwanLab
     grpo_args.report_to_swanlab = False
-    if args.wandb_name and not args.disable_swanlab:
+    if is_main_process and args.wandb_name and not args.disable_swanlab:
         swanlab_api_key = os.getenv("SWANLAB_API_KEY")
         if not swanlab_api_key:
             print("SWANLAB_API_KEY is not set; SwanLab logging is disabled for this run.")
@@ -96,15 +128,22 @@ def main():
             except Exception as exc:
                 print(f"SwanLab init failed ({exc}); continuing without SwanLab logging.")
     
-    print("Initializing Trainer...")
-    trainer = MemGRPOTrainer(
-        model=model,
-        args=grpo_args,
-        tokenizer=tokenizer
-    )
-    
-    print(f"Starting Training with Agent: {grpo_args.agent_type}, Env: {grpo_args.env_type}...")
-    trainer.train(args.data_path)
+    try:
+        if is_main_process:
+            print("Initializing Trainer...")
+        trainer = MemGRPOTrainer(
+            model=model,
+            args=grpo_args,
+            tokenizer=tokenizer
+        )
+        
+        if is_main_process:
+            print(f"Starting Training with Agent: {grpo_args.agent_type}, Env: {grpo_args.env_type}...")
+            if distributed:
+                print(f"DDP enabled: world_size={world_size}, max_steps counts global rollout samples.")
+        trainer.train(args.data_path)
+    finally:
+        cleanup_distributed()
 
 if __name__ == "__main__":
     main()

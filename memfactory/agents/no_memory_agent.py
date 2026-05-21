@@ -162,10 +162,12 @@ class NoMemoryAgent(BaseAgent):
             mean_score = scores_tensor.mean()
             std_score = scores_tensor.std()
 
+            # 方差为0时不跳过，advantages设为全0——避免DDP下各rank同步问题，
+            # 且全0梯度不更新参数，语义上等价于跳过但不需要跨rank协调
             if std_score.item() < 1e-6:
-                continue
-
-            advantages = (scores_tensor - mean_score) / (std_score + 1e-8)
+                advantages = torch.zeros_like(scores_tensor)
+            else:
+                advantages = (scores_tensor - mean_score) / (std_score + 1e-8)
             for j in range(self.num_generations):
                 results.append((formatted_prompts[j], generated_texts[j], advantages[j].item()))
 
