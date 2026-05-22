@@ -25,6 +25,10 @@ except ImportError:
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "")
 LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4.1-nano")
+OPENAI_TIMEOUT_SECONDS = float(os.getenv("OPENAI_TIMEOUT_SECONDS", "300"))
+OPENAI_MAX_RETRIES = int(os.getenv("OPENAI_MAX_RETRIES", "2"))
+
+
 class LLMClient:
     """
     LLM客户端：封装OpenAI API调用
@@ -43,7 +47,9 @@ class LLMClient:
             return
         self.client = OpenAI(
             api_key=OPENAI_API_KEY,
-            base_url=OPENAI_BASE_URL
+            base_url=OPENAI_BASE_URL,
+            timeout=OPENAI_TIMEOUT_SECONDS,
+            max_retries=OPENAI_MAX_RETRIES,
         )
         self.model = LLM_MODEL
         self._initialized = True

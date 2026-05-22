@@ -1,4 +1,5 @@
 import argparse
+from datetime import timedelta
 import os
 import sys
 import torch
@@ -24,7 +25,11 @@ def setup_distributed():
         if not torch.cuda.is_available():
             raise RuntimeError("torchrun DDP requires CUDA for this training script.")
         torch.cuda.set_device(local_rank)
-        dist.init_process_group(backend="nccl")
+        timeout_seconds = int(os.environ.get("DDP_TIMEOUT_SECONDS", "1800"))
+        dist.init_process_group(
+            backend="nccl",
+            timeout=timedelta(seconds=timeout_seconds),
+        )
 
     return distributed, local_rank, global_rank, world_size
 

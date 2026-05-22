@@ -82,6 +82,9 @@ class LongContextMemoryEnv(BaseEnv):
             responses=predictions,
             ground_truths=ground_truths,
             questions=questions,
-            max_workers=kwargs.get('max_workers', 16),
+            max_workers=kwargs.get(
+                'max_workers',
+                int(os.getenv("LLM_REWARD_MAX_WORKERS", "16")),
+            ),
             llm_client=kwargs.get('llm_client', None)
         )

@@ -86,13 +86,14 @@ class NoMemoryAgent(BaseAgent):
             )
         return generated_texts
 
-    def _to_samples(self, results: List[tuple[str, str, float]]) -> Samples:
-        prompts_ids = [self.tokenizer.encode(p, add_special_tokens=False) for p, _, _ in results]
+    def _to_samples(self, results: List[tuple[str, str, float, float]]) -> Samples:
+        prompts_ids = [self.tokenizer.encode(p, add_special_tokens=False) for p, _, _, _ in results]
         responses_ids = [
             self.tokenizer.encode(r, add_special_tokens=False) + [self.tokenizer.eos_token_id]
-            for _, r, _ in results
+            for _, r, _, _ in results
         ]
-        advantages = [a for _, _, a in results]
+        advantages = [a for _, _, a, _ in results]
+        sample_weights = [w for _, _, _, w in results]
 
         max_p_len = max(len(ids) for ids in prompts_ids)
         padded_prompts = []
@@ -124,6 +125,7 @@ class NoMemoryAgent(BaseAgent):
         )
         action_mask = torch.tensor(response_masks, device=self.device, dtype=torch.bool)
         advantages_tensor = torch.tensor(advantages, dtype=torch.float32, device=self.device)
+        sample_weight_tensor = torch.tensor(sample_weights, dtype=torch.float32, device=self.device)
 
         return Samples(
             prompt_response_ids=input_ids,
@@ -133,6 +135,7 @@ class NoMemoryAgent(BaseAgent):
             rewards=advantages_tensor,
             prompt_length=torch.tensor([max_p_len] * len(results), device=self.device),
             response_length=action_mask.sum(dim=1),
+            sample_weight=sample_weight_tensor,
             step_type="no_memory",
         )
 
@@ -172,10 +175,12 @@ class NoMemoryAgent(BaseAgent):
 
             if std_score.item() < 1e-6:
                 advantages = torch.zeros_like(scores_tensor)
+                sample_weight = 0.0
             else:
                 advantages = (scores_tensor - mean_score) / (std_score + 1e-8)
+                sample_weight = 1.0
             for j in range(self.num_generations):
-                results.append((formatted_prompts[j], generated_texts[j], advantages[j].item()))
+                results.append((formatted_prompts[j], generated_texts[j], advantages[j].item(), sample_weight))
 
         if not results:
             return None

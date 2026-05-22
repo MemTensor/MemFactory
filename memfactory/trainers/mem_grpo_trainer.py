@@ -3,6 +3,7 @@ import torch
 import torch.distributed as dist
 import torch.nn.functional as F
 import os
+import time
 from copy import deepcopy
 from contextlib import nullcontext
 from typing import Optional, Dict, Any
@@ -96,6 +97,7 @@ class MemGRPOTrainer:
                 device_ids=[self.local_rank] if self._is_cuda_device() else None,
                 output_device=self.local_rank if self._is_cuda_device() else None,
                 find_unused_parameters=False,
+                broadcast_buffers=False,
             )
         else:
             self.model = self.policy_model
@@ -119,6 +121,14 @@ class MemGRPOTrainer:
         except Exception as exc:
             self._swanlab_failed = True
             print(f"[SwanLab] Logging disabled after failure: {exc}")
+
+    def _ddp_debug(self, message: str):
+        if os.environ.get("MEMFACTORY_DDP_DEBUG", "0") != "1":
+            return
+        print(
+            f"[rank{self.global_rank} step={self.update_steps}] {message}",
+            flush=True,
+        )
 
     def _has_trainable_samples(self, samples_output) -> bool:
         if not samples_output:
@@ -146,6 +156,24 @@ class MemGRPOTrainer:
         ready = torch.tensor(1 if local_ready else 0, device=self.args.device, dtype=torch.int)
         dist.all_reduce(ready, op=dist.ReduceOp.MIN)
         return bool(ready.item())
+
+    def _samples_have_local_signal(self, samples: Samples) -> bool:
+        if samples.sample_weight is not None:
+            return bool(torch.any(samples.sample_weight > 0).item())
+        if samples.rewards is not None:
+            return bool(torch.any(samples.rewards.abs() > 1e-8).item())
+        return False
+
+    def _any_rank_has_signal(self, local_has_signal: bool) -> bool:
+        if not self.is_distributed:
+            return local_has_signal
+        signal = torch.tensor(
+            1 if local_has_signal else 0,
+            device=self.args.device,
+            dtype=torch.int,
+        )
+        dist.all_reduce(signal, op=dist.ReduceOp.MAX)
+        return bool(signal.item())
 
     def _batch_global_steps(self, batch: Dict[str, Any]) -> int:
         local_batch = len(batch.get("context_ids", []))
@@ -204,12 +232,19 @@ class MemGRPOTrainer:
             per_token_loss = per_token_loss + self.args.beta * k3
             
         loss = per_token_loss.sum(dim=1) / (action_mask.sum(dim=1) + 1e-8)
+        sample_weight = inputs.get('sample_weight')
+        if sample_weight is not None:
+            sample_weight = sample_weight.to(device=loss.device, dtype=loss.dtype)
+            return (loss * sample_weight).sum() / sample_weight.sum().clamp_min(1.0)
         return loss.mean()
 
-    def train_step(self, inputs, step):
+    def train_step(self, inputs, step, force_zero_loss: bool = False):
         self.model.train()
         training_batch_size = max(1, self.args.train_micro_batch_size)
         total_samples = inputs['prompt_response_ids'].size(0)
+        total_weight = None
+        if inputs.get('sample_weight') is not None:
+            total_weight = inputs['sample_weight'].float().sum().item()
         total_loss = 0.0
         should_step_optimizer = (step + 1) % self.args.gradient_accumulation_steps == 0
 
@@ -222,9 +257,14 @@ class MemGRPOTrainer:
                     loss = self.compute_loss(self.model, mini_inputs)
             else:
                 loss = self.compute_loss(self.model, mini_inputs)
+            if force_zero_loss:
+                loss = loss * 0.0
 
             mini_batch_size = end_i - i
-            scale_factor = mini_batch_size / total_samples
+            if total_weight is not None and total_weight > 0:
+                scale_factor = mini_inputs['sample_weight'].float().sum().item() / total_weight
+            else:
+                scale_factor = mini_batch_size / total_samples
             scaled_loss = loss * scale_factor
 
             if self.scaler:
@@ -288,6 +328,7 @@ class MemGRPOTrainer:
             "prompt_response_ids": samples.prompt_response_ids,
             "attention_mask": samples.attention_mask,
             "action_mask": samples.action_mask,
+            "sample_weight": samples.sample_weight,
             "advantages": samples.rewards,
             "old_action_log_probs": old_lp,
             "ref_action_log_probs": ref_lp
@@ -352,11 +393,18 @@ class MemGRPOTrainer:
             )
             for idx, batch in pbar:
                 # Rollout
+                rollout_start = time.time()
+                local_batch_size = len(batch.get("context_ids", []))
+                self._ddp_debug(f"batch={idx} rollout_start local_batch={local_batch_size}")
                 self.policy_model.eval()
                 samples_output = agent.rollout(self.policy_model, batch, reward_fn=reward_fn_wrapper)
-                # no_memory agent 的 rollout 不会返回 None（方差为0时 advantages 置零），
-                # 无需跨 rank 协调 skip，直接继续。
-                # 其他带 memory 的 agent 仍保留原逻辑：只支持单卡，不做 DDP skip 协调。
+                self._ddp_debug(
+                    f"batch={idx} rollout_done seconds={time.time() - rollout_start:.1f} "
+                    f"has_samples={bool(samples_output)}"
+                )
+                # no_memory keeps zero-variance samples with sample_weight=0 so
+                # DDP ranks can coordinate whether the batch is an effective step.
+                # Other memory agents keep the previous single-GPU skip behavior.
                 if self.args.agent_type != "no_memory":
                     local_ready = self._has_trainable_samples(samples_output)
                     if not local_ready:
@@ -378,6 +426,9 @@ class MemGRPOTrainer:
                         if samples.rewards is not None:
                             mean_adv = samples.rewards.mean().item()
                             log_dict[f"train/advantage_{step_type}"] = mean_adv
+                            log_dict[f"train/advantage_std_{step_type}"] = samples.rewards.std(unbiased=False).item()
+                        if samples.sample_weight is not None:
+                            log_dict[f"train/effective_ratio_{step_type}"] = samples.sample_weight.float().mean().item()
                         if samples.response_length is not None:
                             mean_len = samples.response_length.float().mean().item()
                             log_dict[f"train/response_length_{step_type}"] = mean_len
@@ -392,6 +443,7 @@ class MemGRPOTrainer:
                         self._log(log_dict)
 
                     # Inner Loop
+                    batch_had_effective_step = False
                     for _ in range(self.args.num_iterations):
                         # Iterate over all types of samples returned by rollout
                         for step_type, samples in samples_dict.items():
@@ -402,17 +454,41 @@ class MemGRPOTrainer:
                             if step_type == 'update' and not self.args.train_update:
                                 should_train = False
                             if should_train and samples.rewards is not None:
+                                local_has_signal = self._samples_have_local_signal(samples)
+                                global_has_signal = self._any_rank_has_signal(local_has_signal)
+                                if not global_has_signal:
+                                    self._ddp_debug(f"train_skip type={step_type} reason=zero_signal_all_ranks")
+                                    continue
+                                batch_had_effective_step = True
+                                if not local_has_signal:
+                                    self._ddp_debug(f"train_zero_sync type={step_type} reason=zero_signal_local_rank")
+                                self._ddp_debug(
+                                    f"train_start type={step_type} samples={samples.prompt_response_ids.size(0)} "
+                                    f"seq_len={samples.prompt_response_ids.size(1)} "
+                                    f"num_actions={samples.num_actions}"
+                                )
+                                train_start = time.time()
                                 train_inputs = self._prepare_train_inputs(samples)
-                                self.train_step(train_inputs, step_count)
+                                self.train_step(
+                                    train_inputs,
+                                    step_count,
+                                    force_zero_loss=not local_has_signal,
+                                )
+                                self._ddp_debug(
+                                    f"train_done type={step_type} seconds={time.time() - train_start:.1f}"
+                                )
                                 step_count += 1
                     
-                    previous_steps = self.update_steps
-                    self.update_steps += self._batch_global_steps(batch)
-                    self._save_due_checkpoints(previous_steps)
-                    if self.args.max_steps is not None and self.args.max_steps > 0 and self.update_steps >= self.args.max_steps:
-                        if self.is_main_process:
-                            print(f"Reached max_steps={self.args.max_steps}; stopping training.")
-                        return
+                    if batch_had_effective_step:
+                        previous_steps = self.update_steps
+                        self.update_steps += self._batch_global_steps(batch)
+                        self._save_due_checkpoints(previous_steps)
+                        if self.args.max_steps is not None and self.args.max_steps > 0 and self.update_steps >= self.args.max_steps:
+                            if self.is_main_process:
+                                print(f"Reached max_steps={self.args.max_steps}; stopping training.")
+                            return
+                    else:
+                        self._ddp_debug(f"batch={idx} effective_step_skip reason=zero_signal_all_ranks")
                 
                 if self._is_cuda_device():
                     torch.cuda.empty_cache()

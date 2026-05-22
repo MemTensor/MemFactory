@@ -17,6 +17,7 @@ class Samples:
     # Metadata for debugging/logging
     prompt_length: Optional[torch.Tensor] = None
     response_length: Optional[torch.Tensor] = None
+    sample_weight: Optional[torch.Tensor] = None
     step_type: str = 'extraction'
 
 class BaseModule(ABC):
