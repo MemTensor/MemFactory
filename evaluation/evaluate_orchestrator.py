@@ -25,14 +25,14 @@ def default_models(agent_type: str) -> List[str]:
         return [
             model_path("Qwen3-1.7B"),
             model_path("Qwen3-4B-Instruct"),
-            repo_path("output", "NoMemoryGRPO1.7B", "checkpoint_250"),
-            repo_path("output", "NoMemoryGRPO4B", "checkpoint_250"),
+            repo_path("output", "NoMemory-GRPO-Qwen3-1.7B", "checkpoint_250"),
+            repo_path("output", "NoMemory-GRPO-Qwen3-4B-Instruct", "checkpoint_250"),
         ]
     return [
         model_path("Qwen3-1.7B"),
         model_path("Qwen3-4B-Instruct"),
-        repo_path("output", "MemoryAgent1.7B", "checkpoint_250"),
-        repo_path("output", "MemoryAgent4B", "checkpoint_250"),
+        repo_path("output", "MemAgent-RL-Qwen3-1.7B", "checkpoint_250"),
+        repo_path("output", "MemAgent-RL-Qwen3-4B-Instruct", "checkpoint_250"),
     ]
 
 def is_task_completed(task: Dict[str, Any]) -> bool:
@@ -118,14 +118,14 @@ def run_tasks_on_gpu(gpu_id: str, tasks: List[Dict[str, Any]]):
 def main():
     parser = argparse.ArgumentParser(description="Multi-GPU Orchestrator for Evaluation")
     parser.add_argument("--gpus", type=str, default=None, help="Comma-separated GPU IDs to use. Defaults to CUDA_VISIBLE_DEVICES if set, otherwise 0,1,2,3,4,5,6,7.")
-    parser.add_argument("--agent_type", type=str, default="memagent", choices=["memagent", "no_memory"], help="Evaluation policy")
-    parser.add_argument("--models", type=str, default=None, help="Comma-separated model/checkpoint paths. Defaults depend on agent_type.")
+    parser.add_argument("--agent_type", type=str, default="all", choices=["memagent", "no_memory", "all"], help="Evaluation policy. Use 'all' to run both memagent and no_memory in one pass.")
+    parser.add_argument("--models", type=str, default=None, help="Comma-separated model/checkpoint paths. Ignored when agent_type=all.")
     parser.add_argument("--datasets", type=str, default=None, help="Comma-separated dataset paths.")
     parser.add_argument("--output_dir", type=str, default=None, help="Directory for evaluation results")
     parser.add_argument("--chunk_size", type=int, default=2500)
     parser.add_argument("--n_paths", type=int, default=4)
-    parser.add_argument("--max_prompt_length", type=int, default=8192)
-    parser.add_argument("--max_tokens", type=int, default=2048)
+    parser.add_argument("--max_prompt_length", type=int, default=12000)
+    parser.add_argument("--max_tokens", type=int, default=4000)
     parser.add_argument("--context_truncation_side", type=str, default="head", choices=["head", "tail", "middle"])
     parser.add_argument("--vllm_max_model_len", type=int, default=32768)
     parser.add_argument("--gpu_memory_utilization", type=float, default=0.9)
@@ -137,10 +137,16 @@ def main():
     gpus = [g.strip() for g in gpu_arg.split(",") if g.strip()]
     num_gpus = len(gpus)
 
-    if args.models:
-        models = [m.strip() for m in args.models.split(",") if m.strip()]
+    if args.agent_type == "all":
+        type_model_pairs = [
+            (at, m)
+            for at in ["memagent", "no_memory"]
+            for m in default_models(at)
+        ]
+    elif args.models:
+        type_model_pairs = [(args.agent_type, m.strip()) for m in args.models.split(",") if m.strip()]
     else:
-        models = default_models(args.agent_type)
+        type_model_pairs = [(args.agent_type, m) for m in default_models(args.agent_type)]
 
     if args.datasets:
         datasets = [d.strip() for d in args.datasets.split(",") if d.strip()]
@@ -148,8 +154,10 @@ def main():
         datasets = [
             repo_path("datas", "eval_50.json"),
             repo_path("datas", "eval_100.json"),
+            repo_path("datas", "eval_200.json"),
+            repo_path("datas", "eval_400.json"),
             repo_path("datas", "eval_fwe_16384.json"),
-            # repo_path("datas", "eval_fwe_32768.json")
+            repo_path("datas", "eval_fwe_32768.json"),
         ]
 
     output_dir = args.output_dir or os.path.join(os.path.dirname(os.path.abspath(__file__)), "eval_results")
@@ -158,7 +166,7 @@ def main():
     # Generate all tasks
     all_tasks = []
     tasks = []
-    for m in models:
+    for (agent_type, m) in type_model_pairs:
         if not os.path.exists(m):
             print(f"Skipping missing model/checkpoint: {m}")
             continue
@@ -166,22 +174,16 @@ def main():
             if not os.path.exists(d):
                 print(f"Skipping missing dataset: {d}")
                 continue
-            # Generate a readable name for the model
-            if "checkpoint" in m:
-                parts = m.rstrip("/").split("/")
-                m_name = f"{parts[-2]}_{parts[-1]}"
-            else: # 也只保留最后两项
-                parts = m.rstrip("/").split("/")
-                m_name = f"{parts[-2]}_{parts[-1]}"
-                
+            parts = m.rstrip("/").split("/")
+            m_name = f"{parts[-2]}_{parts[-1]}"
             d_name = os.path.basename(d).replace(".json", "")
-            out_file = os.path.join(output_dir, f"{args.agent_type}_{m_name}_{d_name}.json")
+            out_file = os.path.join(output_dir, f"{agent_type}_{m_name}_{d_name}.json")
             
             task_info = {
                 "model": m,
                 "dataset": d,
                 "out_file": out_file,
-                "agent_type": args.agent_type,
+                "agent_type": agent_type,
                 "chunk_size": args.chunk_size,
                 "n_paths": args.n_paths,
                 "max_prompt_length": args.max_prompt_length,
