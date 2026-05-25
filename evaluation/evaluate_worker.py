@@ -93,11 +93,32 @@ def main():
     
     results = []
     total_score = 0.0
-    
+    start_idx = 0
+
     # Create output directory if it doesn't exist
     os.makedirs(os.path.dirname(os.path.abspath(args.output_file)), exist_ok=True)
-    
-    for i, sample in enumerate(tqdm(samples, desc=f"Evaluating {os.path.basename(args.dataset_path)}")):
+
+    # Resume from existing partial progress
+    if os.path.exists(args.output_file):
+        try:
+            with open(args.output_file, 'r', encoding='utf-8') as f:
+                existing = json.load(f)
+            existing_results = existing.get('results', [])
+            existing_summary = existing.get('summary', {})
+            processed = existing_summary.get('processed', 0)
+            total = existing_summary.get('total', len(samples))
+            if 0 < processed < total and len(existing_results) == processed:
+                results = existing_results
+                total_score = sum(r['avg_score'] for r in results)
+                start_idx = processed
+                print(f"Resuming from sample {start_idx}/{total} (already processed: {processed})")
+            else:
+                print(f"Starting fresh (existing file has processed={processed}, total={total})")
+        except Exception as e:
+            print(f"Could not load existing progress ({e}), starting fresh.")
+
+    for i, sample in enumerate(tqdm(samples[start_idx:], desc=f"Evaluating {os.path.basename(args.dataset_path)}", initial=start_idx, total=len(samples)),
+                                start=start_idx):
         question = sample['question']
         context = sample['context']
         ground_truth = sample['ground_truth']
