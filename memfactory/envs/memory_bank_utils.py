@@ -1,6 +1,6 @@
 # =============================================================================
-# 公共配置模块 - Common Configuration Module
-# 包含：LLM客户端、Embedding服务、Neo4j图数据库、Milvus向量数据库
+# Common configuration module
+# Includes LLM, embedding, Neo4j, and Milvus clients.
 # =============================================================================
 
 import os
@@ -12,44 +12,44 @@ from dataclasses import dataclass, field, asdict
 from enum import Enum
 import numpy as np
 from openai import OpenAI
-# OpenAI API 依赖
+# OpenAI API dependency
 from ..common.utils import LLMClient
 
 
 # =============================================================================
-# 环境配置
-# 请在项目根目录创建 .env 文件配置以下环境变量，参考 .env.example
+# Environment configuration
+# Create a .env file at the project root if local overrides are needed.
 # =============================================================================
 
-# 尝试加载 .env 文件（如果存在）
+# Try loading a .env file if one exists.
 try:
     from dotenv import load_dotenv
-    # 尝试从多个位置加载 .env
+    # Try loading .env from common project locations.
     for env_path in ['.env', '../.env', '../../.env']:
         if os.path.exists(env_path):
             load_dotenv(env_path)
             break
 except ImportError:
-    pass  # python-dotenv 未安装，跳过
+    pass  # python-dotenv is optional.
 
-# OpenAI LLM API 配置
+# OpenAI LLM API configuration
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "")
 LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4.1-nano")
 
-# Embedding API 配置（独立的服务地址和Key）
+# Embedding API configuration with a separate endpoint and key.
 EMBEDDING_API_KEY = os.getenv("EMBEDDING_API_KEY", "EMPTY")
 EMBEDDING_BASE_URL = os.getenv("EMBEDDING_BASE_URL", "")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "bge-m3")
-EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "1024"))  # BGE-M3 默认1024维
+EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "1024"))  # BGE-M3 defaults to 1024 dimensions.
 
-# Neo4j 配置
+# Neo4j configuration
 NEO4J_URI = os.getenv("NEO4J_URI", "")
 NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "")
-NEO4J_DATABASE = os.getenv("NEO4J_DATABASE", "neo4j")  # 数据库名，留空则使用默认数据库
+NEO4J_DATABASE = os.getenv("NEO4J_DATABASE", "neo4j")  # Leave empty to use the server default database.
 
-# Milvus 配置
+# Milvus configuration
 MILVUS_URI = os.getenv("MILVUS_URI", "")
 MILVUS_USER = os.getenv("MILVUS_USER", "root")
 MILVUS_PASSWORD = os.getenv("MILVUS_PASSWORD", "")
@@ -57,11 +57,11 @@ MILVUS_COLLECTION = os.getenv("MILVUS_COLLECTION", "memory_embeddings")
 
 
 # =============================================================================
-# 枚举类型定义
+# Enum definitions
 # =============================================================================
 
 class MemoryType(Enum):
-    """记忆类型枚举"""
+    """Memory type enum."""
     LONG_TERM_MEMORY = "LongTermMemory"
     USER_MEMORY = "UserMemory"
     FACT = "fact"
@@ -70,7 +70,7 @@ class MemoryType(Enum):
 
 
 class MemoryStatus(Enum):
-    """记忆状态枚举"""
+    """Memory status enum."""
     ACTIVATED = "activated"
     ARCHIVED = "archived"
     DEPRECATED = "deprecated"
@@ -78,7 +78,7 @@ class MemoryStatus(Enum):
 
 
 class UpdateAction(Enum):
-    """更新操作类型"""
+    """Update action type."""
     ADD = "add"
     UPDATE = "update"
     DELETE = "delete"
@@ -87,7 +87,7 @@ class UpdateAction(Enum):
 
 
 class RelationType(Enum):
-    """关系类型枚举"""
+    """Relationship type enum."""
     CAUSES = "causes"
     FOLLOWS = "follows"
     RESOLVES = "resolves"
@@ -98,32 +98,31 @@ class RelationType(Enum):
 
 
 # =============================================================================
-# 核心数据结构
+# Core data structures
 # =============================================================================
 
 @dataclass
 class MemoryItem:
     """
-    记忆条目：系统的基本存储单元
-    统一的数据结构，用于各模块之间传递
+    Memory item: the basic storage unit used across modules.
     """
     id: str
-    key: str                          # 记忆标题/关键词
-    value: str                        # 记忆内容
-    memory_type: str                  # 记忆类型
-    tags: List[str]                   # 标签列表
-    confidence: float = 0.9           # 置信度 (0-1)
-    created_at: str = ""              # 创建时间
-    updated_at: str = ""              # 更新时间
-    user_id: str = "default_user"     # 用户ID
-    session_id: str = "default_session"  # 会话ID
-    status: str = "activated"         # 状态
-    source_type: str = "user_explicit"   # 来源类型
-    source_credibility: float = 1.0   # 来源可信度
-    access_count: int = 0             # 访问次数
-    decay_score: float = 1.0          # 衰减分数
-    version: int = 1                  # 版本号
-    embedding: Optional[List[float]] = None  # 向量表示
+    key: str                          # Memory title or keyword.
+    value: str                        # Memory content.
+    memory_type: str                  # Memory type.
+    tags: List[str]                   # Tag list.
+    confidence: float = 0.9           # Confidence score in [0, 1].
+    created_at: str = ""              # Creation timestamp.
+    updated_at: str = ""              # Last update timestamp.
+    user_id: str = "default_user"     # User ID.
+    session_id: str = "default_session"  # Session ID.
+    status: str = "activated"         # Status.
+    source_type: str = "user_explicit"   # Source type.
+    source_credibility: float = 1.0   # Source credibility.
+    access_count: int = 0             # Access count.
+    decay_score: float = 1.0          # Decay score.
+    version: int = 1                  # Version number.
+    embedding: Optional[List[float]] = None  # Vector representation.
     
     def __post_init__(self):
         if not self.created_at:
@@ -132,17 +131,17 @@ class MemoryItem:
             self.updated_at = self.created_at
     
     def to_dict(self) -> Dict:
-        """转换为字典"""
+        """Convert to a dictionary."""
         result = asdict(self)
-        # 移除embedding以减少序列化大小
+        # Remove the raw embedding to reduce serialized output size.
         if 'embedding' in result and result['embedding'] is not None:
             result['embedding'] = f"<vector dim={len(result['embedding'])}>"
         return result
     
     @classmethod
     def from_dict(cls, data: Dict) -> 'MemoryItem':
-        """从字典创建"""
-        # 处理embedding字段
+        """Create from a dictionary."""
+        # Ignore serialized embedding placeholders.
         if 'embedding' in data and isinstance(data['embedding'], str):
             data['embedding'] = None
         return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
@@ -150,10 +149,10 @@ class MemoryItem:
 
 @dataclass
 class ConversationMessage:
-    """对话消息"""
+    """Conversation message."""
     role: str           # user / assistant / system
-    content: str        # 消息内容
-    timestamp: Optional[str] = None # 时间戳
+    content: str        # Message content.
+    timestamp: Optional[str] = None # Timestamp.
     
     def __post_init__(self):
         if self.timestamp is None:
@@ -162,7 +161,7 @@ class ConversationMessage:
 
 @dataclass
 class ExtractionResult:
-    """抽取结果"""
+    """Extraction result."""
     memory_list: List[MemoryItem]
     summary: str
     status: str = "SUCCESS"  # SUCCESS / BUFFERED / IGNORED / TIMEOUT
@@ -170,15 +169,15 @@ class ExtractionResult:
 
 @dataclass
 class SearchResult:
-    """检索结果"""
-    memories: List[Tuple[MemoryItem, float]]  # (记忆, 相关性分数)
+    """Search result."""
+    memories: List[Tuple[MemoryItem, float]]  # (memory, relevance score)
     query: str
     total_found: int
 
 
 @dataclass
 class Edge:
-    """图边：连接两个节点的关系"""
+    """Graph edge connecting two nodes."""
     source_id: str
     target_id: str
     relation_type: str
@@ -187,13 +186,12 @@ class Edge:
 
 
 # =============================================================================
-# Embedding 服务
+# Embedding service
 # =============================================================================
 
 class EmbeddingClient:
     """
-    Embedding客户端：使用BGE-M3模型生成向量
-    通过独立的OpenAI兼容接口调用（与LLM服务分离）
+    Embedding client that calls an OpenAI-compatible embedding service.
     """
     
     _instance = None
@@ -207,26 +205,26 @@ class EmbeddingClient:
     def __init__(self):
         if self._initialized:
             return
-        # 使用独立的Embedding服务配置
+        # Use the separate embedding service configuration.
         self.client = OpenAI(
             api_key=EMBEDDING_API_KEY,
             base_url=EMBEDDING_BASE_URL
         )
         self.model = EMBEDDING_MODEL
-        self.dim = EMBEDDING_DIM  # BGE-M3 默认1024维
-        self._use_mock = True  # 默认使用mock（如果API不可用）
+        self.dim = EMBEDDING_DIM  # BGE-M3 defaults to 1024 dimensions.
+        self._use_mock = True  # Use mock embeddings unless the API is enabled.
         self._initialized = True
-        print(f"[EmbeddingClient] 已初始化，模型: {self.model}, 服务地址: {EMBEDDING_BASE_URL}")
+        print(f"[EmbeddingClient] Initialized with model: {self.model}, endpoint: {EMBEDDING_BASE_URL}")
     
     def embed(self, text: str) -> List[float]:
         """
-        生成文本的向量表示
+        Generate a vector representation for text.
         
         Args:
-            text: 输入文本
+            text: Input text.
             
         Returns:
-            向量列表
+            Embedding vector.
         """
         if not self._use_mock:
             try:
@@ -236,14 +234,14 @@ class EmbeddingClient:
                 )
                 return response.data[0].embedding
             except Exception as e:
-                print(f"[EmbeddingClient] API调用失败，使用mock: {e}")
+                print(f"[EmbeddingClient] API call failed; using mock embeddings: {e}")
                 self._use_mock = True
         
-        # Mock实现：基于文本hash生成确定性向量
+        # Mock implementation: deterministic vectors based on a text hash.
         return self._mock_embed(text)
     
     def _mock_embed(self, text: str) -> List[float]:
-        """Mock embedding实现"""
+        """Mock embedding implementation."""
         hash_val = int(hashlib.md5(text.encode()).hexdigest(), 16)
         np.random.seed(hash_val % (2**32))
         embedding = np.random.randn(self.dim).tolist()
@@ -251,11 +249,11 @@ class EmbeddingClient:
         return [x / norm for x in embedding]
     
     def embed_batch(self, texts: List[str]) -> List[List[float]]:
-        """批量生成向量"""
+        """Generate embeddings in a batch."""
         return [self.embed(text) for text in texts]
     
     def similarity(self, emb1: List[float], emb2: List[float]) -> float:
-        """计算余弦相似度"""
+        """Compute cosine similarity."""
         dot = sum(a * b for a, b in zip(emb1, emb2))
         norm1 = np.sqrt(sum(a * a for a in emb1))
         norm2 = np.sqrt(sum(b * b for b in emb2))
@@ -263,12 +261,12 @@ class EmbeddingClient:
 
 
 # =============================================================================
-# Neo4j 图数据库客户端
+# Neo4j graph database client
 # =============================================================================
 
 class Neo4jClient:
     """
-    Neo4j客户端：用于存储和查询记忆图谱
+    Neo4j client for storing and querying the memory graph.
     """
     
     _instance = None
@@ -296,48 +294,48 @@ class Neo4jClient:
             )
             self._driver.verify_connectivity()
             
-            # 尝试确保数据库存在
+            # Ensure the target database exists when possible.
             self._ensure_database_exists()
             
             self._use_mock = False
-            print(f"[Neo4jClient] 已连接到 {NEO4J_URI}, 数据库: {self._database}")
+            print(f"[Neo4jClient] Connected to {NEO4J_URI}, database: {self._database}")
         except Exception as e:
-            print(f"[Neo4jClient] 连接失败，使用内存存储: {e}")
+            print(f"[Neo4jClient] Connection failed; using in-memory storage: {e}")
         
         self._initialized = True
     
     def _ensure_database_exists(self):
-        """确保数据库存在，如果不存在则创建"""
+        """Ensure the database exists, creating it when supported."""
         if not self._database:
             return
         
         try:
-            # 使用system数据库来创建新数据库
+            # Use the system database to create a new database.
             with self._driver.session(database="system") as session:
-                # 检查数据库是否存在
+                # Check whether the database already exists.
                 result = session.run("SHOW DATABASES")
                 existing_dbs = [record["name"] for record in result]
                 
                 if self._database not in existing_dbs:
-                    print(f"[Neo4jClient] 数据库 '{self._database}' 不存在，正在创建...")
+                    print(f"[Neo4jClient] Database '{self._database}' does not exist; creating it.")
                     session.run(f"CREATE DATABASE {self._database} IF NOT EXISTS")
-                    print(f"[Neo4jClient] 数据库 '{self._database}' 创建成功")
+                    print(f"[Neo4jClient] Database '{self._database}' created.")
         except Exception as e:
-            # 如果无法创建数据库（可能是社区版不支持），尝试使用默认数据库
-            print(f"[Neo4jClient] 无法创建数据库 '{self._database}': {e}")
-            print(f"[Neo4jClient] 尝试使用默认数据库...")
+            # Fall back to the default database if database creation is unavailable.
+            print(f"[Neo4jClient] Could not create database '{self._database}': {e}")
+            print("[Neo4jClient] Falling back to the default database.")
             self._database = None
     
     def _get_session(self):
-        """获取数据库session"""
+        """Get a database session."""
         if self._database:
             return self._driver.session(database=self._database)
         else:
-            # 使用服务器默认数据库
+            # Use the server default database.
             return self._driver.session()
     
     def save_memory(self, memory: MemoryItem) -> bool:
-        """保存记忆节点"""
+        """Save a memory node."""
         if self._use_mock:
             self._mock_store[memory.id] = memory
             return True
@@ -358,11 +356,11 @@ class Neo4jClient:
                 """, **memory.to_dict())
             return True
         except Exception as e:
-            print(f"[Neo4jClient] 保存失败: {e}")
+            print(f"[Neo4jClient] Save failed: {e}")
             return False
     
     def get_memory(self, memory_id: str) -> Optional[MemoryItem]:
-        """获取记忆节点"""
+        """Get a memory node."""
         if self._use_mock:
             return self._mock_store.get(memory_id)
         
@@ -376,11 +374,11 @@ class Neo4jClient:
                 if record:
                     return MemoryItem.from_dict(dict(record["m"]))
         except Exception as e:
-            print(f"[Neo4jClient] 查询失败: {e}")
+            print(f"[Neo4jClient] Query failed: {e}")
         return None
     
     def get_all_memories(self, user_id: str = None) -> List[MemoryItem]:
-        """获取所有记忆"""
+        """Get all memories."""
         if self._use_mock:
             memories = list(self._mock_store.values())
             if user_id:
@@ -396,14 +394,14 @@ class Neo4jClient:
                 result = session.run(query, user_id=user_id)
                 return [MemoryItem.from_dict(dict(r["m"])) for r in result]
         except Exception as e:
-            print(f"[Neo4jClient] 查询失败: {e}")
+            print(f"[Neo4jClient] Query failed: {e}")
         return []
     
     def save_edge(self, edge: Edge) -> bool:
-        """保存关系边"""
+        """Save a relationship edge."""
         if self._use_mock:
-            # 在Mock模式下禁止建立边，只作为简单数据库使用
-            print("[Neo4jClient] 警告: 在Mock模式下禁止建立边")
+            # Mock mode acts as a simple key-value store and does not add edges.
+            print("[Neo4jClient] Warning: edge creation is disabled in mock mode.")
             return False
         
         try:
@@ -417,12 +415,12 @@ class Neo4jClient:
                     weight=edge.weight)
             return True
         except Exception as e:
-            print(f"[Neo4jClient] 保存边失败: {e}")
+            print(f"[Neo4jClient] Edge save failed: {e}")
             return False
     
     def get_related_memories(self, memory_id: str, 
                              relation_type: str = None) -> List[Tuple[MemoryItem, str]]:
-        """获取相关记忆"""
+        """Get related memories."""
         if self._use_mock:
             results = []
             for edge in self._mock_edges:
@@ -443,11 +441,11 @@ class Neo4jClient:
                 return [(MemoryItem.from_dict(dict(r["b"])), r["rel_type"]) 
                         for r in result]
         except Exception as e:
-            print(f"[Neo4jClient] 查询失败: {e}")
+            print(f"[Neo4jClient] Query failed: {e}")
         return []
     
     def delete_memory(self, memory_id: str) -> bool:
-        """删除记忆"""
+        """Delete a memory."""
         if self._use_mock:
             if memory_id in self._mock_store:
                 del self._mock_store[memory_id]
@@ -464,23 +462,22 @@ class Neo4jClient:
                 )
             return True
         except Exception as e:
-            print(f"[Neo4jClient] 删除失败: {e}")
+            print(f"[Neo4jClient] Delete failed: {e}")
             return False
     
     def close(self):
-        """关闭连接"""
+        """Close the connection."""
         if self._driver:
             self._driver.close()
 
 
 # =============================================================================
-# Milvus 向量数据库客户端
+# Milvus vector database client
 # =============================================================================
 
 class MilvusClient:
     """
-    Milvus客户端：用于向量检索
-    支持账号密码认证，支持user_id过滤
+    Milvus client for vector retrieval with optional user_id filtering.
     """
     
     _instance = None
@@ -502,8 +499,8 @@ class MilvusClient:
         try:
             from pymilvus import connections, Collection, FieldSchema, CollectionSchema, DataType, utility
             
-            # 使用URI + 账号密码认证连接
-            # 根据URI判断是否使用SSL（https开头则使用SSL）
+            # Connect with URI plus username/password credentials.
+            # Enable SSL when the URI uses https.
             use_secure = MILVUS_URI.startswith("https://")
             connections.connect(
                 alias="default",
@@ -513,21 +510,21 @@ class MilvusClient:
                 secure=use_secure
             )
             
-            # 创建或获取集合
+            # Create or open the collection.
             if not utility.has_collection(MILVUS_COLLECTION):
                 fields = [
                     FieldSchema(name="id", dtype=DataType.VARCHAR, is_primary=True, max_length=100),
-                    FieldSchema(name="user_id", dtype=DataType.VARCHAR, max_length=100),  # 添加user_id字段
+                    FieldSchema(name="user_id", dtype=DataType.VARCHAR, max_length=100),  # User ID field.
                     FieldSchema(name="embedding", dtype=DataType.FLOAT_VECTOR, dim=EMBEDDING_DIM)
                 ]
                 schema = CollectionSchema(fields, description="Memory embeddings with user_id filter")
                 self._collection = Collection(MILVUS_COLLECTION, schema)
-                # 创建向量索引
+                # Create a vector index.
                 self._collection.create_index(
                     field_name="embedding",
                     index_params={"index_type": "IVF_FLAT", "metric_type": "COSINE", "params": {"nlist": 128}}
                 )
-                # 为user_id创建标量索引以加速过滤
+                # Create a scalar index for faster user_id filtering.
                 self._collection.create_index(
                     field_name="user_id",
                     index_params={"index_type": "INVERTED"}
@@ -537,23 +534,23 @@ class MilvusClient:
             
             self._collection.load()
             self._use_mock = False
-            print(f"[MilvusClient] 已连接到 {MILVUS_URI}")
+            print(f"[MilvusClient] Connected to {MILVUS_URI}")
         except Exception as e:
-            print(f"[MilvusClient] 连接失败，使用内存存储: {e}")
+            print(f"[MilvusClient] Connection failed; using in-memory storage: {e}")
         
         self._initialized = True
     
     def insert(self, memory_id: str, embedding: List[float], user_id: str = "default_user") -> bool:
         """
-        插入向量
+        Insert a vector.
         
         Args:
-            memory_id: 记忆ID
-            embedding: 向量
-            user_id: 用户ID
+            memory_id: Memory ID.
+            embedding: Vector.
+            user_id: User ID.
             
         Returns:
-            是否插入成功
+            Whether insertion succeeded.
         """
         if self._use_mock:
             self._mock_vectors[memory_id] = {"embedding": embedding, "user_id": user_id}
@@ -564,27 +561,27 @@ class MilvusClient:
             self._collection.flush()
             return True
         except Exception as e:
-            print(f"[MilvusClient] 插入失败: {e}")
+            print(f"[MilvusClient] Insert failed: {e}")
             return False
     
     def search(self, query_embedding: List[float], top_k: int = 10, 
                user_id: str = None) -> List[Tuple[str, float]]:
         """
-        向量检索，支持user_id过滤
+        Search vectors with optional user_id filtering.
         
         Args:
-            query_embedding: 查询向量
-            top_k: 返回数量
-            user_id: 用户ID过滤（可选，None表示不过滤）
+            query_embedding: Query vector.
+            top_k: Number of results.
+            user_id: Optional user ID filter.
             
         Returns:
-            (memory_id, score) 列表
+            List of (memory_id, score) pairs.
         """
         if self._use_mock:
-            # Mock实现：计算余弦相似度，支持user_id过滤
+            # Mock implementation: cosine similarity with user_id filtering.
             results = []
             for mid, data in self._mock_vectors.items():
-                # user_id过滤
+                # user_id filter
                 if user_id is not None and data["user_id"] != user_id:
                     continue
                 score = self._embedding_client.similarity(query_embedding, data["embedding"])
@@ -595,7 +592,7 @@ class MilvusClient:
         try:
             search_params = {"metric_type": "COSINE", "params": {"nprobe": 10}}
             
-            # 构建过滤表达式
+            # Build the filter expression.
             expr = None
             if user_id is not None:
                 expr = f'user_id == "{user_id}"'
@@ -605,16 +602,16 @@ class MilvusClient:
                 anns_field="embedding",
                 param=search_params,
                 limit=top_k,
-                expr=expr,  # 使用user_id过滤
+                expr=expr,  # Apply user_id filtering.
                 output_fields=["id", "user_id"]
             )
             return [(hit.id, hit.score) for hit in results[0]]
         except Exception as e:
-            print(f"[MilvusClient] 检索失败: {e}")
+            print(f"[MilvusClient] Search failed: {e}")
             return []
     
     def delete(self, memory_id: str) -> bool:
-        """删除向量"""
+        """Delete a vector."""
         if self._use_mock:
             if memory_id in self._mock_vectors:
                 del self._mock_vectors[memory_id]
@@ -625,18 +622,18 @@ class MilvusClient:
             self._collection.delete(f'id == "{memory_id}"')
             return True
         except Exception as e:
-            print(f"[MilvusClient] 删除失败: {e}")
+            print(f"[MilvusClient] Delete failed: {e}")
             return False
     
     def delete_by_user(self, user_id: str) -> bool:
         """
-        删除指定用户的所有向量
+        Delete all vectors for a specific user.
         
         Args:
-            user_id: 用户ID
+            user_id: User ID.
             
         Returns:
-            是否删除成功
+            Whether deletion succeeded.
         """
         if self._use_mock:
             to_delete = [mid for mid, data in self._mock_vectors.items() if data["user_id"] == user_id]
@@ -648,18 +645,17 @@ class MilvusClient:
             self._collection.delete(f'user_id == "{user_id}"')
             return True
         except Exception as e:
-            print(f"[MilvusClient] 按用户删除失败: {e}")
+            print(f"[MilvusClient] Delete by user failed: {e}")
             return False
 
 
 # =============================================================================
-# 统一存储管理器
+# Unified storage manager
 # =============================================================================
 
 class MemoryStore:
     """
-    统一记忆存储管理器
-    确保Neo4j和Milvus的ID同步，提供统一的CRUD接口
+    Unified memory store with synchronized Neo4j and Milvus IDs.
     """
     
     _instance = None
@@ -677,57 +673,57 @@ class MemoryStore:
         self.milvus = MilvusClient()
         self.embedding = EmbeddingClient()
         
-        # 判断Mock状态
+        # Determine mock status.
         if self.neo4j._use_mock and self.milvus._use_mock:
             self.use_mock = True
-            print("[MemoryStore] 运行在Mock模式 (纯内存存储)")
+            print("[MemoryStore] Running in mock mode with in-memory storage.")
         elif not self.neo4j._use_mock and not self.milvus._use_mock:
             self.use_mock = False
-            print("[MemoryStore] 运行在真实数据库模式")
+            print("[MemoryStore] Running in database-backed mode.")
         else:
-            raise ValueError("配置错误: Neo4j和Milvus必须同时为Mock模式或同时为真实模式")
+            raise ValueError("Configuration error: Neo4j and Milvus must both be mock-backed or database-backed.")
 
         self._initialized = True
-        print("[MemoryStore] 统一存储管理器初始化完成")
+        print("[MemoryStore] Unified storage manager initialized.")
     
     def save(self, memory: MemoryItem, generate_embedding: bool = True) -> bool:
         """
-        统一保存记忆：同时写入Neo4j和Milvus，确保ID对应
+        Save a memory to Neo4j and Milvus using the same ID.
         
         Args:
-            memory: 记忆条目
-            generate_embedding: 是否生成embedding
+            memory: Memory item.
+            generate_embedding: Whether to generate an embedding.
             
         Returns:
-            是否保存成功
+            Whether the save succeeded.
         """
         try:
-            # 1. 生成embedding（如果需要）
+            # 1. Generate an embedding if needed.
             if generate_embedding or memory.embedding is None:
                 text = f"{memory.key} {memory.value}"
                 memory.embedding = self.embedding.embed(text)
             
-            # 2. 保存到Neo4j（结构化数据）
+            # 2. Save structured data to Neo4j.
             neo4j_success = self.neo4j.save_memory(memory)
             
-            # 3. 保存到Milvus（向量数据），使用相同的ID和user_id
+            # 3. Save vector data to Milvus with the same ID and user_id.
             milvus_success = self.milvus.insert(memory.id, memory.embedding, memory.user_id)
             
             if neo4j_success and milvus_success:
                 if not self.use_mock:
-                    # 训练期间不打印保存成功，避免干扰训练日志
-                    print(f"[MemoryStore] 保存成功: {memory.id} - {memory.key} (user: {memory.user_id})")
+                    # Avoid noisy success logs during training in mock mode.
+                    print(f"[MemoryStore] Save succeeded: {memory.id} - {memory.key} (user: {memory.user_id})")
                 return True
             else:
-                print(f"[MemoryStore] 保存部分失败: Neo4j={neo4j_success}, Milvus={milvus_success}")
+                print(f"[MemoryStore] Partial save failure: Neo4j={neo4j_success}, Milvus={milvus_success}")
                 return False
                 
         except Exception as e:
-            print(f"[MemoryStore] 保存异常: {e}")
+            print(f"[MemoryStore] Save exception: {e}")
             return False
     
     def save_batch(self, memories: List[MemoryItem], generate_embedding: bool = True) -> List[bool]:
-        """批量保存记忆"""
+        """Save memories in a batch."""
         results = []
         for memory in memories:
             success = self.save(memory, generate_embedding)
@@ -735,15 +731,15 @@ class MemoryStore:
         return results
     
     def get(self, memory_id: str) -> Optional[MemoryItem]:
-        """获取记忆"""
+        """Get a memory."""
         return self.neo4j.get_memory(memory_id)
     
     def get_all(self, user_id: str = None) -> List[MemoryItem]:
-        """获取所有记忆"""
+        """Get all memories."""
         return self.neo4j.get_all_memories(user_id)
     
     def delete(self, memory_id: str) -> bool:
-        """删除记忆（同时从Neo4j和Milvus删除）"""
+        """Delete a memory from both Neo4j and Milvus."""
         neo4j_success = self.neo4j.delete_memory(memory_id)
         milvus_success = self.milvus.delete(memory_id)
         return neo4j_success and milvus_success
@@ -751,29 +747,29 @@ class MemoryStore:
     def search_similar(self, query: str, top_k: int = 10, 
                        user_id: str = None) -> List[Tuple[MemoryItem, float]]:
         """
-        搜索相似记忆
+        Search for similar memories.
         
         Args:
-            query: 查询文本
-            top_k: 返回数量
-            user_id: 用户ID过滤（在Milvus层面直接过滤，而非检索后过滤）
+            query: Query text.
+            top_k: Number of results.
+            user_id: User ID filter applied in Milvus.
             
         Returns:
-            (记忆, 相似度分数) 列表
+            List of (memory, similarity score) pairs.
         """
-        # 1. 生成查询向量
+        # 1. Generate the query vector.
         query_emb = self.embedding.embed(query)
         
-        # 2. 向量检索（user_id在Milvus层面直接过滤）
-        # 多请求一些结果，因为后续还需要状态过滤
+        # 2. Search vectors with user_id filtering at the Milvus layer.
+        # Request extra results because status filtering happens later.
         vector_results = self.milvus.search(query_emb, top_k=top_k * 2, user_id=user_id)
         
-        # 3. 获取记忆详情并进行状态过滤
+        # 3. Fetch memory details and filter by status.
         results = []
         for memory_id, score in vector_results:
             memory = self.neo4j.get_memory(memory_id)
             if memory:
-                # 状态过滤（user_id已在Milvus层面过滤）
+                # Status filtering; user_id has already been handled in Milvus.
                 if memory.status != MemoryStatus.ACTIVATED.value:
                     continue
                 results.append((memory, score))
@@ -783,93 +779,93 @@ class MemoryStore:
     def find_related_memories(self, memory: MemoryItem, 
                               top_k: int = 10) -> List[Tuple[MemoryItem, float]]:
         """
-        查找与给定记忆相关的已有记忆（用于更新决策）
+        Find existing memories related to a new memory for update decisions.
         
         Args:
-            memory: 新抽取的记忆
-            top_k: 返回数量
+            memory: Newly extracted memory.
+            top_k: Number of results.
             
         Returns:
-            (相关记忆, 相似度) 列表
+            List of (related memory, similarity) pairs.
         """
         query = f"{memory.key} {memory.value}"
         results = self.search_similar(query, top_k=top_k, user_id=memory.user_id)
-        # 排除自身
+        # Exclude the memory itself.
         return [(m, s) for m, s in results if m.id != memory.id]
 
     def to_list(self) -> List[Dict]:
         if not self.use_mock:
-            raise RuntimeError("to_list 方法仅在 use_mock=True 时可用")
+            raise RuntimeError("to_list is only available when use_mock=True")
             
         results = []
-        # 直接访问Neo4jClient的mock store，其中存储了MemoryItem对象
+        # Access the Neo4jClient mock store, which contains MemoryItem objects.
         for mem in self.neo4j._mock_store.values():
-            # 使用to_dict获取数据，embedding会被替换为描述字符串
+            # Use to_dict so embeddings are replaced by compact placeholders.
             item_dict = mem.to_dict()
             results.append(item_dict)
         return results
 
     def from_list(self, data: List[Dict]) -> None:
         if not self.use_mock:
-            raise RuntimeError("from_list 方法仅在 use_mock=True 时可用")
+            raise RuntimeError("from_list is only available when use_mock=True")
             
-        # 清空现有Mock数据
+        # Clear existing mock data.
         self.neo4j._mock_store.clear()
         self.milvus._mock_vectors.clear()
         
         for item_dict in data:
-            # 重建MemoryItem对象，此时embedding为None
+            # Rebuild MemoryItem objects; embeddings are regenerated below.
             mem = MemoryItem.from_dict(item_dict)
             
-            # 使用save方法保存，会自动触发embedding生成并存入Neo4j和Milvus
+            # Save regenerates embeddings and writes to both backends.
             self.save(mem)
 
 # =============================================================================
-# 全局单例获取函数
+# Global singleton accessors
 # =============================================================================
 
 def get_memory_store() -> MemoryStore:
-    """获取统一存储管理器单例"""
+    """Get the unified memory store singleton."""
     return MemoryStore()
 
 
 def get_llm_client() -> LLMClient:
-    """获取LLM客户端单例"""
+    """Get the LLM client singleton."""
     return LLMClient()
 
 
 def get_embedding_client() -> EmbeddingClient:
-    """获取Embedding客户端单例"""
+    """Get the embedding client singleton."""
     return EmbeddingClient()
 
 
 def get_neo4j_client() -> Neo4jClient:
-    """获取Neo4j客户端单例"""
+    """Get the Neo4j client singleton."""
     return Neo4jClient()
 
 
 def get_milvus_client() -> MilvusClient:
-    """获取Milvus客户端单例"""
+    """Get the Milvus client singleton."""
     return MilvusClient()
 
 
 # =============================================================================
-# 工具函数
+# Utility functions
 # =============================================================================
 
 def generate_id() -> str:
-    """生成唯一ID"""
+    """Generate a unique ID."""
     import uuid
     return str(uuid.uuid4())
 
 
 def current_timestamp() -> str:
-    """获取当前时间戳"""
+    """Get the current timestamp."""
     return datetime.now().isoformat()
 
 
 def format_conversation(messages: List[ConversationMessage]) -> str:
-    """格式化对话为字符串"""
+    """Format a conversation as text."""
     lines = []
     for msg in messages:
         if not msg.timestamp or msg.timestamp == "" or msg.timestamp == " ":
@@ -880,39 +876,39 @@ def format_conversation(messages: List[ConversationMessage]) -> str:
 
 
 # =============================================================================
-# 测试代码
+# Smoke test
 # =============================================================================
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("公共模块测试")
+    print("Common module smoke test")
     print("=" * 60)
     
-    # 测试LLM客户端
+    # Test the LLM client.
     llm = get_llm_client()
-    print(f"LLM客户端: {llm.model}")
+    print(f"LLM client: {llm.model}")
     
-    # 测试Embedding客户端
+    # Test the embedding client.
     emb = get_embedding_client()
-    vec = emb.embed("测试文本")
-    print(f"Embedding维度: {len(vec)}")
+    vec = emb.embed("test text")
+    print(f"Embedding dimension: {len(vec)}")
     
-    # 测试Neo4j客户端
+    # Test the Neo4j client.
     neo4j = get_neo4j_client()
     test_mem = MemoryItem(
         id=generate_id(),
-        key="测试记忆",
-        value="这是一条测试记忆",
+        key="test memory",
+        value="this is a test memory",
         memory_type="UserMemory",
-        tags=["测试"]
+        tags=["test"]
     )
     neo4j.save_memory(test_mem)
-    print(f"Neo4j保存成功: {test_mem.id}")
+    print(f"Neo4j save succeeded: {test_mem.id}")
     
-    # 测试Milvus客户端
+    # Test the Milvus client.
     milvus = get_milvus_client()
     milvus.insert(test_mem.id, vec)
     results = milvus.search(vec, top_k=1)
-    print(f"Milvus检索结果: {results}")
+    print(f"Milvus search results: {results}")
     
-    print("\n所有测试通过！")
+    print("\nAll smoke tests passed.")

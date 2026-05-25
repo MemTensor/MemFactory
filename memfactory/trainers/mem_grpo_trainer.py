@@ -336,8 +336,6 @@ class MemGRPOTrainer:
 
     def train(self, data_path):
         step_count = 0
-        # no_memory agent 需要打乱数据以避免连续相似样本导致方差长期为0；
-        # 带 memory 的 agent 训练时保持原来不打乱的行为（与历史一致）
         effective_shuffle = self.args.do_shuffle or (self.args.agent_type == "no_memory")
 
         # 1. Initialize Env

@@ -25,7 +25,7 @@ def process_dataset(dataset_path):
             # eval_fwe_xx type dataset
             for item in data:
                 assert isinstance(item['outputs'], list) and len(item['outputs']) == 3, "Each item must have a list of 3 outputs"
-                # 把 outputs 中的 3 个元素拼起来, 用逗号空格分隔
+                # Join the three output elements with comma-space separators.
                 ground_truth = ', '.join(item['outputs'])
                 samples.append({
                     'question': item['input'],

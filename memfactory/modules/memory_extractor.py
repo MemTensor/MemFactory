@@ -70,8 +70,9 @@ class NaiveExtractor(BaseModule):
         # This module is usually called by a parent Orchestrator, but can be standalone.
         # If standalone, it needs 'fact' in batch_data.
         # Returns Samples object.
-        # 解释，rollout 要求返回含有奖励的对象，这需要新的架构和算法
-        # 目前并没有收录可以单独训练抽取（抽取之后就能获取奖励）的算法，我们鼓励您进行这方面的扩展。
+        # Standalone rollout would need to return rewards, which requires a
+        # separate training architecture. Extraction-only training is left for
+        # future extensions.
         pass # Not implemented as standalone for now, used by MemoryR1Agent
 
     def generate(self, model, facts: List[List[Dict]], num_generations: int = 1) -> tuple[List[str], List[str]]:
